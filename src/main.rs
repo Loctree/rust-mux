@@ -592,7 +592,7 @@ mod tests {
             "id": "g1",
             "result": { "ok": true }
         });
-        handle_server_message(server_msg, &state).await.unwrap();
+        assert!(handle_server_message(server_msg, &state).await.is_ok());
 
         // client1 got response with local id
         let m1 = rx1.recv().await.expect("client1 message");
@@ -625,7 +625,7 @@ mod tests {
         drop(st);
 
         let server_msg = serde_json::json!({"id": "g2", "result": 123});
-        handle_server_message(server_msg, &state).await.unwrap();
+        assert!(handle_server_message(server_msg, &state).await.is_ok());
 
         let msg = rx1.recv().await.expect("client message");
         assert_eq!(msg.get("id"), Some(&Value::Number(7.into())));

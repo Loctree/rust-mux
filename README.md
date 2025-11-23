@@ -10,12 +10,20 @@ Small Rust daemon that lets many MCP clients reuse a single STDIO server process
 - Notifications are broadcast to all connected clients.
 - Restart-on-exit for the child; pending/waiting requests receive an error on reset.
 - Ctrl+C stops the mux, kills the child, and removes the socket file.
+- Optional tray indicator (`--tray`) shows live server status (running/restarting), client and pending counts, initialize cache state, and restart reason.
 
 ## Build
 ```
 cargo build --release
 ```
 Binaries live in `target/release/mcp_mux`.
+
+## Install (curl | sh)
+```
+curl -fsSL https://raw.githubusercontent.com/LibraxisAI/mcp_mux/main/tools/install.sh | sh
+```
+- Places wrapper in `$HOME/.local/bin/mcp_mux` and ensures PATH contains cargo bin + wrapper dir.
+- You can override `INSTALL_DIR` or `CARGO_HOME` envs.
 
 ## Run (example: memory server)
 ```
@@ -24,6 +32,54 @@ Binaries live in `target/release/mcp_mux`.
   --cmd npx -- @modelcontextprotocol/server-memory \
   --max-active-clients 5 \
   --log-level info
+
+## Config-driven run (JSON/YAML/TOML)
+- Default config path: `~/.codex/mcp.json` (override via `--config <path>`). Parser auto-detects by extension (`.json`, `.yaml`/`.yml`, `.toml`).
+- JSON:
+```
+{
+  "servers": {
+    "general-memory": {
+      "socket": "~/mcp-sockets/general-memory.sock",
+      "cmd": "npx",
+      "args": ["@modelcontextprotocol/server-memory"],
+      "max_active_clients": 5,
+      "tray": true,
+      "service_name": "general-memory"
+    }
+  }
+}
+```
+- YAML:
+```
+servers:
+  general-memory:
+    socket: "~/mcp-sockets/general-memory.sock"
+    cmd: "npx"
+    args: ["@modelcontextprotocol/server-memory"]
+    max_active_clients: 5
+    tray: true
+    service_name: "general-memory"
+```
+- TOML:
+```
+[servers.general-memory]
+socket = "~/mcp-sockets/general-memory.sock"
+cmd = "npx"
+args = ["@modelcontextprotocol/server-memory"]
+max_active_clients = 5
+tray = true
+service_name = "general-memory"
+```
+- Run using config entry:
+```
+./target/release/mcp_mux --config ~/.codex/mcp.json --service general-memory
+```
+- CLI flags still override config (e.g. `--socket`, `--cmd`, `--tray`).
+
+## Tray status (optional)
+- Run with `--tray` to spawn a small status icon. The drawer lists service name, server state, connected/active clients, pending requests, initialize cache state, and restart count/reason.
+- Click “Quit mux” in the tray menu to stop the daemon (propagates shutdown to the child and cleans the socket).
 ```
 
 ### Proxy config for MCP hosts

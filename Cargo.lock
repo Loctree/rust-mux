@@ -1625,7 +1625,7 @@ dependencies = [
 
 [[package]]
 name = "rmcp_mux"
-version = "0.1.5"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "bytes",

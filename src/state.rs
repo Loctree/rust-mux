@@ -236,4 +236,10 @@ mod tests {
 
         assert_eq!(first + 1, second);
     }
+
+    #[test]
+    fn error_response_uses_jsonrpc_2_0() {
+        let resp = error_response(Value::Number(1.into()), "oops");
+        assert_eq!(resp.get("jsonrpc"), Some(&Value::String("2.0".into())));
+    }
 }

@@ -15,13 +15,13 @@ use tray_icon::{
 use crate::state::{ServerStatus, StatusSnapshot};
 
 #[derive(Clone, Debug)]
-pub struct LoadedIcon {
+pub(crate) struct LoadedIcon {
     pub data: Vec<u8>,
     pub width: u32,
     pub height: u32,
 }
 
-pub fn spawn_tray(
+pub(crate) fn spawn_tray(
     status_rx: tokio::sync::watch::Receiver<StatusSnapshot>,
     shutdown: CancellationToken,
     icon: Option<LoadedIcon>,
@@ -62,7 +62,7 @@ fn send_latest(tx: &Sender<StatusSnapshot>, snap: StatusSnapshot) {
     }
 }
 
-pub struct TrayUi {
+struct TrayUi {
     _tray: tray_icon::TrayIcon,
     header: MenuItem,
     status: MenuItem,
@@ -230,7 +230,7 @@ fn default_icon() -> Icon {
     Icon::from_rgba(data, w as u32, h as u32).expect("valid icon")
 }
 
-pub fn find_tray_icon() -> Option<LoadedIcon> {
+pub(crate) fn find_tray_icon() -> Option<LoadedIcon> {
     let candidates = [
         PathBuf::from("public/rmcp_mux_icon.png"),
         std::env::current_exe()
@@ -247,7 +247,7 @@ pub fn find_tray_icon() -> Option<LoadedIcon> {
     None
 }
 
-pub fn load_icon_from_file(path: &Path) -> Option<LoadedIcon> {
+pub(crate) fn load_icon_from_file(path: &Path) -> Option<LoadedIcon> {
     let data = std::fs::read(path).ok()?;
     let img = image::load_from_memory_with_format(&data, ImageFormat::Png).ok()?;
     let rgba = img.to_rgba8();

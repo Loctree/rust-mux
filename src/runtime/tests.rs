@@ -11,14 +11,14 @@ use serde_json::Value;
 use tempfile::tempdir;
 use tokio::net::UnixListener;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
-use tokio::sync::{watch, Mutex, Semaphore};
+use tokio::sync::{Mutex, Semaphore, watch};
 
 use crate::config::{
-    expand_path, load_config, resolve_params, CliOptions, Config, ResolvedParams, ServerConfig,
+    CliOptions, Config, ResolvedParams, ServerConfig, expand_path, load_config, resolve_params,
 };
 use crate::state::{
-    error_response, publish_status, reset_state, set_id, snapshot_for_state, MuxState, Pending,
-    ServerStatus, StatusSnapshot,
+    MuxState, Pending, ServerStatus, StatusSnapshot, error_response, publish_status, reset_state,
+    set_id, snapshot_for_state,
 };
 
 use super::client::handle_client_message;
@@ -284,7 +284,8 @@ async fn reset_state_broadcasts_errors() {
 fn expand_path_expands_home() {
     let home = tmp_path("home-test");
     fs::create_dir_all(&home).expect("create home temp dir");
-    env::set_var("HOME", &home);
+    // SAFETY: Test runs single-threaded, no concurrent access to env
+    unsafe { env::set_var("HOME", &home) };
     let expanded = expand_path("~/socket.sock");
     assert!(expanded.starts_with(&home));
 }

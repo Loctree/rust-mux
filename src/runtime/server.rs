@@ -4,18 +4,18 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use futures::{SinkExt, StreamExt};
 use rmcp::transport::async_rw::JsonRpcMessageCodec;
 use serde_json::Value;
 use tokio::process::Command as TokioCommand;
-use tokio::sync::{mpsc, watch, Mutex, Semaphore};
+use tokio::sync::{Mutex, Semaphore, mpsc, watch};
 use tokio::time::sleep;
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::state::{publish_status, reset_state, set_id, MuxState, ServerStatus, StatusSnapshot};
+use crate::state::{MuxState, ServerStatus, StatusSnapshot, publish_status, reset_state, set_id};
 
 use super::client::update_queue_depth;
 use super::types::ServerEvent;
@@ -217,10 +217,10 @@ pub async fn server_manager(
 
         // write loop and monitor
         let mut should_restart = true;
-        if let Some(msg) = first_msg.take() {
-            if let Err(e) = writer.send(msg).await {
-                warn!("write to server failed on first message: {e}");
-            }
+        if let Some(msg) = first_msg.take()
+            && let Err(e) = writer.send(msg).await
+        {
+            warn!("write to server failed on first message: {e}");
         }
         while !shutdown.is_cancelled() {
             tokio::select! {

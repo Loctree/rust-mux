@@ -5,14 +5,14 @@
 
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand};
 use tracing_subscriber::filter::LevelFilter;
 
-use rmcp_mux::config::{expand_path, load_config, resolve_params, CliOptions};
+use rmcp_mux::config::{CliOptions, expand_path, load_config, resolve_params};
 use rmcp_mux::runtime::{health_check, run_mux, run_proxy};
 use rmcp_mux::scan::{
-    run_rewire_cmd, run_scan_cmd, run_status_cmd, RewireArgs, ScanArgs, StatusArgs,
+    RewireArgs, ScanArgs, StatusArgs, run_rewire_cmd, run_scan_cmd, run_status_cmd,
 };
 use rmcp_mux::wizard::WizardArgs;
 

@@ -4,8 +4,8 @@ use std::io::Write;
 
 use anyhow::{Context, Result};
 
-use crate::config::{expand_path, Config};
-use crate::scan::{rewire_host, HostFile, HostFormat};
+use crate::config::{Config, expand_path, safe_copy};
+use crate::scan::{HostFile, HostFormat, rewire_host};
 
 use super::types::{AppState, ConfirmChoice, HealthCheckChoice, Panel, WizardStep};
 
@@ -94,8 +94,7 @@ pub fn persist_all(app: &AppState) -> Result<()> {
     // Create backup if file exists
     if expanded_path.exists() {
         let backup_path = expanded_path.with_extension("bak");
-        std::fs::copy(&expanded_path, &backup_path)
-            .with_context(|| format!("failed to create backup at {}", backup_path.display()))?;
+        safe_copy(&expanded_path, &backup_path)?;
     }
 
     // Write the config

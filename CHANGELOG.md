@@ -2,6 +2,56 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2025-12-04
+
+### Added
+- **Library-first architecture** – rmcp-mux is now an embeddable Rust library, not just a CLI tool.
+- `MuxConfig` builder for programmatic configuration:
+  ```rust
+  let config = MuxConfig::new("/tmp/mcp.sock", "npx")
+      .with_args(vec!["@mcp/server-memory".into()])
+      .with_max_clients(10);
+  ```
+- `run_mux_server(config)` – blocking entry point for single mux server.
+- `spawn_mux_server(config)` – non-blocking spawn returning `MuxHandle` for lifecycle control.
+- `MuxHandle` with `shutdown()`, `wait()`, `is_running()` methods.
+- `run_mux_with_shutdown(params, token)` – external `CancellationToken` support for custom shutdown logic.
+- `check_health(socket_path)` – simple health check function.
+- `CliOptions` trait for generic CLI parameter handling.
+- `docs/integration.md` – comprehensive library integration guide.
+- Feature flags: `cli` (wizard, scan, binaries) and `tray` (system tray icon).
+
+### Changed
+- **Package renamed** from `rmcp_mux` to `rmcp-mux` (crates.io convention).
+- **Binary renamed** from `rmcp_mux` to `rmcp-mux`, proxy from `rmcp_mux_proxy` to `rmcp-mux-proxy`.
+- **Library name** remains `rmcp_mux` (Rust identifier requirement) – use `use rmcp_mux::*` in code.
+- Project structure reorganized:
+  - `src/lib.rs` – new library entry point with public API.
+  - `src/bin/rmcp_mux.rs` – CLI binary (requires `cli` feature).
+  - `src/bin/rmcp_mux_proxy.rs` – proxy binary (requires `cli` feature).
+- `runtime/mod.rs` split: `run_mux` now delegates to `run_mux_internal` with external shutdown support.
+- `config.rs`: `resolve_params` now generic over `CliOptions` trait.
+- Default features: `["cli", "tray"]` – use `default-features = false` for library-only.
+
+### Migration Guide
+**From CLI to Library:**
+```rust
+// Before: rmcp-mux --socket /tmp/mcp.sock --cmd npx -- @mcp/server
+// After:
+use rmcp_mux::{MuxConfig, run_mux_server};
+let config = MuxConfig::new("/tmp/mcp.sock", "npx")
+    .with_args(vec!["@mcp/server".into()]);
+run_mux_server(config).await?;
+```
+
+**Multiple servers in one process:**
+```rust
+use rmcp_mux::{MuxConfig, spawn_mux_server};
+let h1 = spawn_mux_server(MuxConfig::new("/tmp/a.sock", "server-a")).await?;
+let h2 = spawn_mux_server(MuxConfig::new("/tmp/b.sock", "server-b")).await?;
+// Both run in single process, sharing tokio runtime
+```
+
 ## [0.2.1] - 2025-11-27
 
 ### Added
@@ -64,7 +114,7 @@ All notable changes to this project will be documented in this file.
 ## [0.1.0] - 2025-11-15
 
 ### Added
-- Initial release of rmcp_mux.
+- Initial release of rmcp-mux.
 - Single MCP server child process management.
 - Unix socket listener for multiple clients.
 - JSON-RPC ID rewriting per client.

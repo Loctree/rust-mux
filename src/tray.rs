@@ -4,12 +4,12 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
+use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use image::ImageFormat;
 use tokio_util::sync::CancellationToken;
 use tray_icon::{
-    menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
     Icon, TrayIconBuilder,
+    menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
 };
 
 use crate::state::{ServerStatus, StatusSnapshot};

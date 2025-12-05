@@ -10,12 +10,12 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{mpsc, watch, Mutex, Semaphore};
+use tokio::sync::{Mutex, Semaphore, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::config::ResolvedParams;
-use crate::state::{error_response, publish_status, snapshot_for_state, MuxState, StatusSnapshot};
+use crate::state::{MuxState, StatusSnapshot, error_response, publish_status, snapshot_for_state};
 #[cfg(feature = "tray")]
 use crate::tray::{find_tray_icon, spawn_tray};
 

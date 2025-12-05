@@ -75,7 +75,7 @@ pub mod wizard;
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub use config::{CliOptions, Config, ResolvedParams, ServerConfig};
-pub use runtime::{health_check, run_mux, run_mux_internal, run_proxy, MAX_PENDING, MAX_QUEUE};
+pub use runtime::{MAX_PENDING, MAX_QUEUE, health_check, run_mux, run_mux_internal, run_proxy};
 pub use state::{MuxState, ServerStatus, StatusSnapshot};
 
 // ─────────────────────────────────────────────────────────────────────────────

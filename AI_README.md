@@ -1,13 +1,19 @@
-# rmcp_mux – AI-facing Overview
+# rmcp-mux – AI-facing Overview
 
-> **Version:** 0.2.1  
-> **Last updated:** 2025-11-27
+> **Version:** 0.3.0
+> **Last updated:** 2025-12-04
 
-This document provides a concise technical overview for AI agents working with the rmcp_mux codebase.
+This document provides a concise technical overview for AI agents working with the rmcp-mux codebase.
 
 ## Purpose
 
-Share a single MCP server process (e.g., `npx @modelcontextprotocol/server-memory`) across many MCP hosts via a Unix socket. The mux handles:
+**Library-first MCP multiplexer** – share a single MCP server process across many hosts via Unix socket.
+
+Two usage modes:
+1. **As a library** – embed in Rust applications, run multiple MCP services in one process
+2. **As a CLI** – standalone daemon with wizard, scan, and rewire commands
+
+Core features:
 - JSON-RPC ID rewriting per client
 - `initialize` request caching and fan-out
 - Request limits, timeouts, and size guards
@@ -16,41 +22,58 @@ Share a single MCP server process (e.g., `npx @modelcontextprotocol/server-memor
 
 ## Quick Start
 
+### Library Usage (Recommended)
+
+```rust
+use rmcp_mux::{MuxConfig, run_mux_server};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let config = MuxConfig::new("/tmp/mcp.sock", "npx")
+        .with_args(vec!["-y".into(), "@mcp/server-memory".into()])
+        .with_max_clients(10);
+    run_mux_server(config).await
+}
+```
+
+### CLI Usage
+
 ```bash
 # Build
 cargo build --release
 
 # Run mux daemon
-./target/release/rmcp_mux \
-  --socket ~/.rmcp_servers/rmcp_mux/sockets/memory.sock \
+./target/release/rmcp-mux \
+  --socket ~/.rmcp_servers/rmcp-mux/sockets/memory.sock \
   --cmd npx -- @modelcontextprotocol/server-memory \
   --max-active-clients 5 \
-  --status-file ~/.rmcp_servers/rmcp_mux/status.json
+  --status-file ~/.rmcp_servers/rmcp-mux/status.json
 
 # Host side: use bundled proxy
-rmcp_mux_proxy --socket ~/.rmcp_servers/rmcp_mux/sockets/memory.sock
+rmcp-mux-proxy --socket ~/.rmcp_servers/rmcp-mux/sockets/memory.sock
 ```
 
-## Project Structure (v0.2.1)
+## Project Structure (v0.3.0)
 
 ```
 src/
-├── main.rs              # CLI entry, subcommand dispatch
-├── config.rs            # Config, ServerConfig, ResolvedParams, load_config
+├── lib.rs               # Library entry point, public API
+├── config.rs            # Config, ServerConfig, ResolvedParams, CliOptions trait
 ├── state.rs             # MuxState, StatusSnapshot, error_response, set_id
-├── scan.rs              # Host discovery, rewiring (HostKind, discover_hosts)
-├── tray.rs              # Tray icon (feature-gated: #[cfg(feature = "tray")])
+├── scan.rs              # Host discovery, rewiring (feature: cli)
+├── tray.rs              # Tray icon (feature: tray)
 ├── bin/
-│   └── rmcp_mux_proxy.rs    # Standalone STDIO↔socket proxy
+│   ├── rmcp_mux.rs      # CLI binary (feature: cli)
+│   └── rmcp_mux_proxy.rs    # STDIO↔socket proxy (feature: cli)
 ├── runtime/             # Mux daemon core
-│   ├── mod.rs           # run_mux, health_check, reap_timeouts
+│   ├── mod.rs           # run_mux, run_mux_internal, health_check
 │   ├── types.rs         # ServerEvent, MAX_QUEUE, MAX_PENDING
 │   ├── client.rs        # handle_client, handle_client_message
 │   ├── server.rs        # server_manager, handle_server_events
 │   ├── proxy.rs         # run_proxy (STDIO)
 │   ├── status.rs        # write_status_file, spawn_status_writer
-│   └── tests.rs         # All runtime tests (753 LOC)
-└── wizard/              # Three-step TUI wizard
+│   └── tests.rs         # All runtime tests
+└── wizard/              # Three-step TUI wizard (feature: cli)
     ├── mod.rs           # run_wizard, run_tui
     ├── types.rs         # WizardStep, ServiceEntry, ClientEntry, FormState
     ├── services.rs      # load_all_services, detect_running_mcp_servers
@@ -59,6 +82,53 @@ src/
     ├── keys.rs          # handle_key, sync_form_to_service
     └── persist.rs       # persist_all, rewire_selected_clients
 ```
+
+## Library API
+
+### Core Types
+
+| Type | Description |
+|------|-------------|
+| `MuxConfig` | Builder for programmatic configuration |
+| `MuxHandle` | Lifecycle control for spawned servers |
+| `ResolvedParams` | Merged CLI + config parameters |
+| `CliOptions` | Trait for generic CLI parameter handling |
+
+### Entry Points
+
+```rust
+// Blocking - runs until Ctrl+C
+run_mux_server(config: MuxConfig) -> Result<()>
+
+// Non-blocking - returns handle for control
+spawn_mux_server(config: MuxConfig) -> Result<MuxHandle>
+
+// External shutdown control
+run_mux_with_shutdown(params: ResolvedParams, token: CancellationToken) -> Result<()>
+
+// Health check
+check_health(socket: impl AsRef<Path>) -> Result<()>
+```
+
+### MuxConfig Builder
+
+```rust
+MuxConfig::new(socket, cmd)
+    .with_args(vec![...])           // Command arguments
+    .with_max_clients(10)           // Max concurrent clients
+    .with_service_name("my-svc")    // For logging/status
+    .with_request_timeout(Duration::from_secs(60))
+    .with_lazy_start(true)          // Spawn on first request
+    .with_status_file("/path")      // JSON snapshots
+```
+
+### MuxHandle Methods
+
+| Method | Description |
+|--------|-------------|
+| `shutdown()` | Request graceful shutdown (non-blocking) |
+| `wait().await` | Wait for server to terminate |
+| `is_running()` | Check if server is still active |
 
 ## CLI Subcommands
 
@@ -91,7 +161,7 @@ Default path: `~/.codex/mcp.json` (override `--config`, pick `--service` key und
 ## Three-Step Wizard
 
 ```bash
-rmcp_mux wizard --config ~/.codex/mcp-mux.toml
+rmcp-mux wizard --config ~/.codex/mcp-mux.toml
 ```
 
 1. **Server Detection** – scans `ps` for MCP processes, loads config, toggles with `Space`
@@ -120,7 +190,7 @@ Written atomically to `status_file` on every state change:
 ## Testing
 
 ```bash
-# Full suite (34 tests)
+# Full suite (40 tests)
 cargo test
 
 # Without tray feature (CI/headless)
@@ -137,31 +207,49 @@ cargo tarpaulin --all-targets --no-default-features --out Lcov
 
 | Symbol | Location | Purpose |
 |--------|----------|---------|
+| `MuxConfig` | lib.rs | Builder for programmatic configuration |
+| `MuxHandle` | lib.rs | Lifecycle control (shutdown, wait, is_running) |
+| `run_mux_server` | lib.rs | Blocking server entry point |
+| `spawn_mux_server` | lib.rs | Non-blocking spawn returning MuxHandle |
+| `run_mux_with_shutdown` | lib.rs | External CancellationToken support |
+| `check_health` | lib.rs | Socket health check |
+| `CliOptions` | config.rs | Trait for generic CLI parameter handling |
 | `ResolvedParams` | config.rs | Merged CLI + config parameters |
 | `MuxState` | state.rs | Runtime state (clients, pending, cache) |
 | `StatusSnapshot` | state.rs | JSON status output |
-| `run_mux` | runtime/mod.rs | Main mux loop |
+| `run_mux` | runtime/mod.rs | Main mux loop (with internal shutdown) |
+| `run_mux_internal` | runtime/mod.rs | Main mux loop (external shutdown) |
 | `server_manager` | runtime/server.rs | Child process lifecycle |
 | `handle_client` | runtime/client.rs | Client connection handler |
-| `run_wizard` | wizard/mod.rs | TUI entry point |
+| `run_wizard` | wizard/mod.rs | TUI entry point (feature: cli) |
 | `WizardStep` | wizard/types.rs | Step enum (Server/Client/Confirmation) |
-| `discover_hosts` | scan.rs | Find host config files |
+| `discover_hosts` | scan.rs | Find host config files (feature: cli) |
 
 ## Notes for AI Agents
 
-1. **Feature gating:** Tray code uses `#[cfg(feature = "tray")]`. Build with `--no-default-features` for headless.
+1. **Library-first architecture:** Use `MuxConfig` + `spawn_mux_server` for embedding. CLI is feature-gated.
 
-2. **Single child model:** One MCP server per socket. Don't introduce multi-child patterns.
+2. **Feature gating:**
+   - `cli` feature: wizard, scan, binaries (clap, ratatui, crossterm)
+   - `tray` feature: system tray icon (tray-icon, image)
+   - Build with `--no-default-features` for library-only.
 
-3. **Initialize caching:** First `initialize` is cached in `MuxState.cached_initialize`. Later clients get cached response via `init_waiting`.
+3. **Naming convention:**
+   - Package name: `rmcp-mux` (crates.io, Cargo.toml)
+   - Library name: `rmcp_mux` (Rust identifier, `use rmcp_mux::*`)
+   - Binary names: `rmcp-mux`, `rmcp-mux-proxy`
 
-4. **Error handling:** Use `anyhow::Result` and `.with_context()` for all fallible operations.
+4. **Single child model:** One MCP server per socket. Multiple services = multiple MuxConfig instances.
 
-5. **Tests:** Colocated in each module as `#[cfg(test)] mod tests`. Use `tempfile::tempdir()` for filesystem tests.
+5. **Initialize caching:** First `initialize` is cached in `MuxState.cached_initialize`. Later clients get cached response via `init_waiting`.
 
-6. **Workspace:** `.ai-agents/` is AI scratch space. Keep helper files there, document in `AI_GUIDELINES.md`.
+6. **Error handling:** Use `anyhow::Result` and `.with_context()` for all fallible operations.
 
-7. **Code style:** 
+7. **Tests:** Colocated in each module as `#[cfg(test)] mod tests`. Use `tempfile::tempdir()` for filesystem tests.
+
+8. **Workspace:** `.ai-agents/` is AI scratch space. Keep helper files there, document in `AI_GUIDELINES.md`.
+
+9. **Code style:**
    - Imports: std → external crates → crate-local
    - English comments only
    - Run `cargo fmt` before committing
@@ -178,4 +266,5 @@ cargo tarpaulin --all-targets --no-default-features --out Lcov
 
 - [README.md](README.md) – User documentation
 - [CHANGELOG.md](CHANGELOG.md) – Version history
+- [docs/integration.md](docs/integration.md) – Library integration guide
 - [.ai-agents/AI_GUIDELINES.md](.ai-agents/AI_GUIDELINES.md) – Detailed development guidelines

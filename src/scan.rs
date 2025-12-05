@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::Args;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{expand_path, Config, ServerConfig};
+use crate::config::{Config, ServerConfig, expand_path, safe_copy, safe_read_to_string};
 
 #[derive(Args, Debug, Clone)]
 pub struct ScanArgs {
@@ -206,8 +206,7 @@ pub fn format_for_host(host: &HostFile) -> &'static str {
 }
 
 pub fn scan_host_file(file: &HostFile) -> Result<ScanResult> {
-    let data = fs::read_to_string(&file.path)
-        .with_context(|| format!("failed to read {}", file.path.display()))?;
+    let data = safe_read_to_string(&file.path)?;
     let raw: RawHostConfig = match file.format {
         HostFormat::Toml => toml::from_str(&data)
             .with_context(|| format!("failed to parse toml {}", file.path.display()))?,
@@ -343,8 +342,7 @@ pub fn rewire_host(
         .ok_or_else(|| anyhow!("no snippet generated for host"))?;
     let format = format_for_host(host);
     let snippet_text = serialize_snippet(snippet, format)?;
-    let data = fs::read_to_string(&host.path)
-        .with_context(|| format!("failed to read {}", host.path.display()))?;
+    let data = safe_read_to_string(&host.path)?;
 
     let merged = match host.format {
         HostFormat::Json => {
@@ -398,8 +396,7 @@ pub fn write_with_backup(path: &Path, contents: &str, dry_run: bool) -> Result<O
     }
     let backup = path.with_extension("bak");
     if path.exists() {
-        fs::copy(path, &backup)
-            .with_context(|| format!("failed to create backup {}", backup.display()))?;
+        safe_copy(path, &backup)?;
     }
     fs::write(path, contents).with_context(|| format!("failed to write {}", path.display()))?;
     Ok(Some(backup))
@@ -654,11 +651,12 @@ mod tests {
             svc.args.as_ref().expect("args"),
             &vec!["@mcp/server-memory"]
         );
-        assert!(svc
-            .socket
-            .as_ref()
-            .expect("socket")
-            .contains("/tmp/sockets/memory.sock"));
+        assert!(
+            svc.socket
+                .as_ref()
+                .expect("socket")
+                .contains("/tmp/sockets/memory.sock")
+        );
     }
 
     #[test]

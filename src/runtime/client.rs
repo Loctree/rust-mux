@@ -3,17 +3,17 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use futures::{SinkExt, StreamExt};
 use rmcp::transport::async_rw::JsonRpcMessageCodec;
 use serde_json::Value;
 use tokio::net::UnixStream;
-use tokio::sync::{mpsc, watch, Mutex, Semaphore};
+use tokio::sync::{Mutex, Semaphore, mpsc, watch};
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::state::{error_response, publish_status, set_id, MuxState, Pending, StatusSnapshot};
+use crate::state::{MuxState, Pending, StatusSnapshot, error_response, publish_status, set_id};
 
 use super::types::MAX_PENDING;
 

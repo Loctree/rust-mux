@@ -7,7 +7,7 @@ use std::process::Command;
 
 use anyhow::Result;
 
-use crate::config::{expand_path, load_config, ServerConfig};
+use crate::config::{ServerConfig, expand_path, load_config};
 
 use super::types::{FormState, HealthStatus, ServiceEntry, ServiceSource};
 

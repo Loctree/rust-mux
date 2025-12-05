@@ -6,19 +6,19 @@
 //! 3. Confirmation - review and save configuration
 //! 4. Health Check - verify configuration works, with option to retry
 
-use std::io::{stdout, IsTerminal};
+use std::io::{IsTerminal, stdout};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::Args;
 use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 
 use crate::config::expand_path;
 
@@ -91,18 +91,18 @@ pub async fn run_wizard(args: WizardArgs) -> Result<()> {
     let mut services = load_all_services(&config_path)?;
 
     // If --service provided, ensure it exists in the list
-    if let Some(ref svc_name) = args.service {
-        if !services.iter().any(|s| s.name == *svc_name) {
-            services.push(ServiceEntry {
-                name: svc_name.clone(),
-                config: default_server_config(),
-                health: HealthStatus::Unknown,
-                dirty: false,
-                source: ServiceSource::Config,
-                pid: None,
-                selected: true,
-            });
-        }
+    if let Some(ref svc_name) = args.service
+        && !services.iter().any(|s| s.name == *svc_name)
+    {
+        services.push(ServiceEntry {
+            name: svc_name.clone(),
+            config: default_server_config(),
+            health: HealthStatus::Unknown,
+            dirty: false,
+            source: ServiceSource::Config,
+            pid: None,
+            selected: true,
+        });
     }
 
     // If list is empty, add a default entry

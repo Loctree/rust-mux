@@ -1,12 +1,12 @@
-# rmcp_mux Development Guidelines
+# rmcp-mux Development Guidelines
 
 This document is intended for an industry specialist who may not be a day‑to‑day programmer but is comfortable with
-command‑line tools and configuration files. It explains how to build, configure, test, and extend the `rmcp_mux` project
+command‑line tools and configuration files. It explains how to build, configure, test, and extend the `rmcp-mux` project
 **based on the Rust source code itself**.
 
 The project is a **Rust** workspace built with **Cargo** (Rust’s package manager and build tool). It provides:
 
-- a main binary called `rmcp_mux` – a robust MCP mux that manages a single MCP server process and many clients over a
+- a main binary called `rmcp-mux` – a robust MCP mux that manages a single MCP server process and many clients over a
   Unix socket; and
 - a helper binary `rmcp_mux_proxy` – a lightweight proxy that connects standard input/output (STDIN/STDOUT) to the mux’s
   Unix socket.
@@ -52,7 +52,7 @@ need:
 Key paths mentioned here are taken directly from the Rust source tree:
 
 - `Cargo.toml` – package definition and dependencies.
-- `src/main.rs` – entry point for the `rmcp_mux` CLI.
+- `src/main.rs` – entry point for the `rmcp-mux` CLI.
 - `src/config.rs` – configuration types and logic (`Config`, `ServerConfig`, `ResolvedParams`, `load_config`,
   `resolve_params`).
 - `src/runtime.rs` – core runtime: Unix socket listener, client handling, server process management, timeouts, health
@@ -68,7 +68,7 @@ error messages or tests.
 
 ### 1.3. Building the binaries
 
-All builds are driven through Cargo. From the project root (`/Users/maciejgad/.rmcp_servers/rmcp_mux` in the current
+All builds are driven through Cargo. From the project root (`/Users/maciejgad/.rmcp_servers/rmcp-mux` in the current
 setup):
 
 #### 1.3.1. Debug build (fast, for development)
@@ -79,18 +79,18 @@ cargo build
 
 This compiles:
 
-- `rmcp_mux` – main mux binary
+- `rmcp-mux` – main mux binary
 - `rmcp_mux_proxy` – proxy binary (because there is a file under `src/bin/`)
 
 The resulting binaries will typically be placed under `target/debug/`:
 
-- `target/debug/rmcp_mux`
+- `target/debug/rmcp-mux`
 - `target/debug/rmcp_mux_proxy`
 
 You can then run them directly, for example:
 
 ```bash
-target/debug/rmcp_mux --help
+target/debug/rmcp-mux --help
 target/debug/rmcp_mux_proxy --help
 ```
 
@@ -102,7 +102,7 @@ cargo build --release
 
 This produces optimized binaries under `target/release/`:
 
-- `target/release/rmcp_mux`
+- `target/release/rmcp-mux`
 - `target/release/rmcp_mux_proxy`
 
 Release builds take longer to compile but run faster and are suited to long‑running deployments.
@@ -135,7 +135,7 @@ tray = ["tray-icon", "image"]
 In the current codebase, only one explicit feature is defined (`tray`), so disabling default features primarily affects
 tray support.
 
-### 1.4. Running `rmcp_mux`
+### 1.4. Running `rmcp-mux`
 
 The CLI is defined in `src/main.rs` using the `clap` library. At a high level there are two modes:
 
@@ -146,7 +146,7 @@ The CLI is defined in `src/main.rs` using the `clap` library. At a high level th
 You can always see the current CLI options by running:
 
 ```bash
-target/debug/rmcp_mux --help
+target/debug/rmcp-mux --help
 ```
 
 #### 1.4.1. Running the mux using only CLI flags
@@ -165,7 +165,7 @@ From `src/main.rs` and `src/config.rs` we can see the relevant CLI fields:
 Example (using a hypothetical npm‑based MCP server):
 
 ```bash
-target/debug/rmcp_mux \
+target/debug/rmcp-mux \
   --socket /tmp/memory.sock \
   --cmd npx \
   -- @mcp/server-memory --some-server-flag
@@ -215,7 +215,7 @@ When you use `--config`, the code requires **also** providing a service key via 
 `resolve_params`):
 
 ```bash
-target/debug/rmcp_mux \
+target/debug/rmcp-mux \
   --config ~/.codex/mcp.json \
   --service memory
 ```
@@ -253,7 +253,7 @@ A minimal JSON config for a single server named `memory` could look like this:
 You would then run:
 
 ```bash
-target/debug/rmcp_mux --config ~/.codex/mcp.json --service memory
+target/debug/rmcp-mux --config ~/.codex/mcp.json --service memory
 ```
 
 Here, `socket` and `cmd` are required for this service to be usable; other fields (`max_active_clients`, `tray`,
@@ -276,7 +276,7 @@ The file `src/bin/rmcp_mux_proxy.rs` defines a separate binary which:
 - connects to a Unix socket (`UnixStream::connect(socket)`) and
 - forwards everything from STDIN to the socket and everything from the socket to STDOUT.
 
-This is useful when a tool expects an MCP server on STDIO, while `rmcp_mux` exposes a Unix socket.
+This is useful when a tool expects an MCP server on STDIO, while `rmcp-mux` exposes a Unix socket.
 
 Example usage (after building):
 
@@ -470,7 +470,7 @@ To add one:
 
 In practice, for more realistic integration tests you would:
 
-- use `std::process::Command` to invoke `target/debug/rmcp_mux --help`, and
+- use `std::process::Command` to invoke `target/debug/rmcp-mux --help`, and
 - assert that the command exits successfully and prints the expected help text.
 
 But note that this requires the binary to be buildable on the local platform; for continuous integration this is normal,
@@ -562,7 +562,7 @@ From the codebase we can observe several conventions:
 The `health` subcommand in `src/main.rs` uses the `health_check` function from `runtime.rs`:
 
 ```bash
-target/debug/rmcp_mux health --socket /tmp/memory.sock --cmd npx -- @mcp/server-memory
+target/debug/rmcp-mux health --socket /tmp/memory.sock --cmd npx -- @mcp/server-memory
 ```
 
 In practice, this subcommand:
@@ -630,7 +630,7 @@ If you do not need a tray icon (for example on a server), you can:
       a Rust developer.
 
 5. **When in doubt, capture three things**
-    - The exact `rmcp_mux` command you ran.
+    - The exact `rmcp-mux` command you ran.
     - The configuration snippet for the relevant service.
     - The terminal output (logs and, if available, the status JSON file contents).
 

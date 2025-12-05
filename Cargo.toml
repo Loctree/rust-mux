@@ -1,10 +1,10 @@
 [package]
-name = "rmcp_mux"
+name = "rmcp-mux"
 version = "0.3.0"
-edition = "2021"
+edition = "2024"
 description = "MCP server multiplexer - single server, multiple clients via Unix sockets"
 license = "MIT"
-repository = "https://github.com/anthropics/rmcp_mux"
+repository = "https://github.com/Loctree/rmcp-mux"
 keywords = ["mcp", "multiplexer", "rpc", "unix-socket"]
 categories = ["network-programming", "development-tools"]
 readme = "README.md"
@@ -14,12 +14,12 @@ name = "rmcp_mux"
 path = "src/lib.rs"
 
 [[bin]]
-name = "rmcp_mux"
+name = "rmcp-mux"
 path = "src/bin/rmcp_mux.rs"
 required-features = ["cli"]
 
 [[bin]]
-name = "rmcp_mux_proxy"
+name = "rmcp-mux-proxy"
 path = "src/bin/rmcp_mux_proxy.rs"
 required-features = ["cli"]
 

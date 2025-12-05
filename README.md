@@ -1,7 +1,7 @@
-# rmcp_mux – MCP Server Multiplexer
+# rmcp-mux – MCP Server Multiplexer
 
 [![CI](https://github.com/Loctree/rmcp-mux/actions/workflows/ci.yml/badge.svg)](https://github.com/Loctree/rmcp-mux/actions/workflows/ci.yml)
-[![Crates.io](https://img.shields.io/crates/v/rmcp_mux.svg)](https://crates.io/crates/rmcp_mux)
+[![Crates.io](https://img.shields.io/crates/v/rmcp-mux.svg)](https://crates.io/crates/rmcp-mux)
 [![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](Cargo.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -49,7 +49,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rmcp_mux = { version = "0.3", default-features = false }
+rmcp-mux = { version = "0.3", default-features = false }
 ```
 
 ### Basic Example - Single Mux Server
@@ -173,7 +173,7 @@ For library-only usage (minimal dependencies):
 
 ```toml
 [dependencies]
-rmcp_mux = { version = "0.3", default-features = false }
+rmcp-mux = { version = "0.3", default-features = false }
 ```
 
 ## Quick Start (CLI)
@@ -183,13 +183,13 @@ rmcp_mux = { version = "0.3", default-features = false }
 cargo build --release
 
 # Run with memory server
-./target/release/rmcp_mux \
+./target/release/rmcp-mux \
   --socket /tmp/mcp-memory.sock \
   --cmd npx -- @modelcontextprotocol/server-memory \
   --max-active-clients 5
 
 # Connect via proxy (for MCP hosts expecting STDIO)
-rmcp_mux_proxy --socket /tmp/mcp-memory.sock
+rmcp-mux-proxy --socket /tmp/mcp-memory.sock
 ```
 
 ## Installation
@@ -197,7 +197,7 @@ rmcp_mux_proxy --socket /tmp/mcp-memory.sock
 ### From source
 ```bash
 cargo build --release
-# Binaries: target/release/rmcp_mux, target/release/rmcp_mux_proxy
+# Binaries: target/release/rmcp-mux, target/release/rmcp-mux-proxy
 ```
 
 ### One-liner (curl | sh)
@@ -214,7 +214,7 @@ curl -fsSL https://raw.githubusercontent.com/Loctree/rmcp-mux/main/tools/install
 ### Built-in proxy
 If your MCP host needs a STDIO command, use the bundled proxy instead of `socat`:
 ```bash
-rmcp_mux_proxy --socket /tmp/mcp-memory.sock
+rmcp-mux-proxy --socket /tmp/mcp-memory.sock
 ```
 
 ## Configuration
@@ -236,7 +236,7 @@ Default path: `~/.codex/mcp.json` (override with `--config <path>`). Parser auto
       "restart_backoff_ms": 1000,
       "restart_backoff_max_ms": 30000,
       "max_restarts": 5,
-      "status_file": "~/.rmcp_servers/rmcp_mux/status.json",
+      "status_file": "~/.rmcp_servers/rmcp-mux/status.json",
       "lazy_start": false,
       "tray": true,
       "service_name": "general-memory"
@@ -268,7 +268,7 @@ tray = true
 
 ### Running with config
 ```bash
-./target/release/rmcp_mux --config ~/.codex/mcp.json --service general-memory
+./target/release/rmcp-mux --config ~/.codex/mcp.json --service general-memory
 ```
 CLI flags override config values (e.g. `--socket`, `--cmd`, `--tray`).
 
@@ -290,10 +290,10 @@ CLI flags override config values (e.g. `--socket`, `--cmd`, `--tray`).
 
 ## Interactive Wizard (TUI)
 
-The wizard provides a **three-step guided flow** for configuring rmcp_mux and rewiring MCP clients:
+The wizard provides a **three-step guided flow** for configuring rmcp-mux and rewiring MCP clients:
 
 ```bash
-rmcp_mux wizard --config ~/.codex/mcp-mux.toml
+rmcp-mux wizard --config ~/.codex/mcp-mux.toml
 ```
 
 ### Step 1: Server Detection
@@ -340,7 +340,7 @@ rmcp_mux wizard --config ~/.codex/mcp-mux.toml
 
 ### Wizard options
 ```bash
-rmcp_mux wizard \
+rmcp-mux wizard \
   --config ~/.codex/mcp-mux.toml \
   --service general-memory \
   --dry-run
@@ -351,38 +351,38 @@ rmcp_mux wizard \
 ### `scan` – Discover and generate configs
 ```bash
 # Generate mux manifest and host snippets
-rmcp_mux scan \
+rmcp-mux scan \
   --manifest ~/.codex/mcp-mux.toml \
   --snippet ~/.codex/mcp-mux \
-  --socket-dir ~/.rmcp_servers/rmcp_mux/sockets
+  --socket-dir ~/.rmcp_servers/rmcp-mux/sockets
 ```
 
 ### `rewire` – Update host configs
 ```bash
-# Rewire a host config to use rmcp_mux proxy (creates .bak backup)
-rmcp_mux rewire --host codex --socket-dir ~/.rmcp_servers/rmcp_mux/sockets
+# Rewire a host config to use rmcp-mux proxy (creates .bak backup)
+rmcp-mux rewire --host codex --socket-dir ~/.rmcp_servers/rmcp-mux/sockets
 
 # Preview changes without writing
-rmcp_mux rewire --host codex --dry-run
+rmcp-mux rewire --host codex --dry-run
 ```
 
 ### `status` – Check rewire status
 ```bash
-rmcp_mux status --host codex --proxy-cmd rmcp_mux_proxy
+rmcp-mux status --host codex --proxy-cmd rmcp-mux-proxy
 ```
 
 ### `health` – Verify connectivity
 ```bash
 # Direct check
-rmcp_mux health --socket /tmp/mcp-memory.sock --cmd npx -- @modelcontextprotocol/server-memory
+rmcp-mux health --socket /tmp/mcp-memory.sock --cmd npx -- @modelcontextprotocol/server-memory
 
 # Config-based check
-rmcp_mux health --config ~/.codex/mcp.json --service general-memory
+rmcp-mux health --config ~/.codex/mcp.json --service general-memory
 ```
 
 ### `proxy` – STDIO proxy
 ```bash
-rmcp_mux proxy --socket /tmp/mcp-memory.sock
+rmcp-mux proxy --socket /tmp/mcp-memory.sock
 ```
 
 ## Runtime Behavior
@@ -417,13 +417,13 @@ Click "Quit mux" in the tray menu to stop the daemon.
 
 For custom monitoring, write status snapshots:
 ```bash
-rmcp_mux --status-file ~/.rmcp_servers/rmcp_mux/status.json ...
+rmcp-mux --status-file ~/.rmcp_servers/rmcp-mux/status.json ...
 ```
 
 ## Project Structure
 
 ```
-rmcp_mux/
+rmcp-mux/
 ├── src/
 │   ├── lib.rs            # Library entry point, MuxConfig, public API
 │   ├── config.rs         # Config types, CliOptions trait, loading
@@ -431,8 +431,8 @@ rmcp_mux/
 │   ├── scan.rs           # Host discovery and rewiring (cli feature)
 │   ├── tray.rs           # Tray icon (tray feature)
 │   ├── bin/
-│   │   ├── rmcp_mux.rs       # CLI binary (cli feature)
-│   │   └── rmcp_mux_proxy.rs # STDIO proxy binary (cli feature)
+│   │   ├── rmcp_mux.rs       # CLI binary → rmcp-mux (cli feature)
+│   │   └── rmcp_mux_proxy.rs # STDIO proxy → rmcp-mux-proxy (cli feature)
 │   ├── runtime/          # Core mux daemon (always available)
 │   │   ├── mod.rs        # run_mux, run_mux_internal, health_check
 │   │   ├── types.rs      # ServerEvent, constants
@@ -498,11 +498,11 @@ cargo tarpaulin --all-targets --timeout 120
 
 ## launchd (macOS)
 
-Template at `tools/launchd/rmcp_mux.sample.plist`:
+Template at `tools/launchd/rmcp-mux.sample.plist`:
 ```bash
-cp tools/launchd/rmcp_mux.sample.plist ~/Library/LaunchAgents/rmcp_mux.general-memory.plist
+cp tools/launchd/rmcp-mux.sample.plist ~/Library/LaunchAgents/rmcp-mux.general-memory.plist
 # Edit paths and user
-launchctl load -w ~/Library/LaunchAgents/rmcp_mux.general-memory.plist
+launchctl load -w ~/Library/LaunchAgents/rmcp-mux.general-memory.plist
 ```
 
 ## Dependency Notes

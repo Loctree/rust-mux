@@ -7,9 +7,9 @@ use super::clients::detect_clients;
 use super::persist::{execute_confirm_choice, persist_all};
 use super::services::{check_health, default_server_config, form_from_service, service_from_form};
 use super::types::{
-    next_confirm_choice, next_field, previous_confirm_choice, previous_field, AppState,
-    ConfirmChoice, Field, HealthCheckChoice, HealthStatus, Panel, ServiceEntry, ServiceSource,
-    WizardStep,
+    AppState, ConfirmChoice, Field, HealthCheckChoice, HealthStatus, Panel, ServiceEntry,
+    ServiceSource, WizardStep, next_confirm_choice, next_field, previous_confirm_choice,
+    previous_field,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

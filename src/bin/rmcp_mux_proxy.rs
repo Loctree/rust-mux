@@ -49,7 +49,7 @@ mod tests {
     use super::run_proxy;
     use std::env;
     use std::path::PathBuf;
-    use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
     use tokio::net::UnixListener;
 
     fn socket_path(name: &str) -> PathBuf {

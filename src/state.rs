@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::{mpsc, watch, Mutex, Semaphore};
+use tokio::sync::{Mutex, Semaphore, mpsc, watch};
 
 #[cfg_attr(not(feature = "tray"), allow(dead_code))]
 #[derive(Clone, Debug, Serialize, Deserialize)]

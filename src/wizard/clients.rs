@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use crate::config::expand_path;
-use crate::scan::{discover_hosts, scan_host_file, HostFormat, HostKind};
+use crate::scan::{HostFormat, HostKind, discover_hosts, scan_host_file};
 
 use super::types::ClientEntry;
 

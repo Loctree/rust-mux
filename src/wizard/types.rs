@@ -9,7 +9,7 @@ use crate::scan::HostKind;
 // Enums
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Wizard step in the three-step flow
+/// Wizard step in the four-step flow
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WizardStep {
     /// Step 1: Detect and select MCP servers
@@ -18,6 +18,17 @@ pub enum WizardStep {
     ClientSelection,
     /// Step 3: Final confirmation and save options
     Confirmation,
+    /// Step 4: Health check - verify configuration works
+    HealthCheck,
+}
+
+/// Choice for the health check step
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealthCheckChoice {
+    /// Configuration verified, exit wizard
+    Ok,
+    /// Re-run detection and try again
+    TryAgain,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +103,8 @@ pub struct ClientEntry {
     pub services: Vec<String>,
     /// Whether the client is already rewired to use rmcp_mux
     pub already_rewired: bool,
+    /// Whether the config file exists (client may be installed but without MCP config)
+    pub config_exists: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -142,6 +155,8 @@ pub struct AppState {
     pub editing: Option<Field>,
     pub active_panel: Panel,
     pub confirm_choice: ConfirmChoice,
+    /// Health check step choice
+    pub health_choice: HealthCheckChoice,
     pub message: String,
     pub dry_run: bool,
 }

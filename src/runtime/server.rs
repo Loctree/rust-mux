@@ -15,9 +15,7 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::state::{
-    error_response, publish_status, reset_state, set_id, MuxState, ServerStatus, StatusSnapshot,
-};
+use crate::state::{publish_status, reset_state, set_id, MuxState, ServerStatus, StatusSnapshot};
 
 use super::client::update_queue_depth;
 use super::types::ServerEvent;

@@ -9,7 +9,8 @@ use ratatui::Frame;
 use crate::scan::HostKind;
 
 use super::types::{
-    AppState, ConfirmChoice, Field, HealthStatus, Panel, ServiceSource, WizardStep,
+    AppState, ConfirmChoice, Field, HealthCheckChoice, HealthStatus, Panel, ServiceSource,
+    WizardStep,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -29,9 +30,10 @@ pub fn draw_ui(f: &mut Frame, app: &AppState) {
 
     // Title with step indicator
     let step_info = match app.wizard_step {
-        WizardStep::ServerSelection => "Step 1/3: Server Detection",
-        WizardStep::ClientSelection => "Step 2/3: Client Detection",
-        WizardStep::Confirmation => "Step 3/3: Confirmation",
+        WizardStep::ServerSelection => "Step 1/4: Server Detection",
+        WizardStep::ClientSelection => "Step 2/4: Client Detection",
+        WizardStep::Confirmation => "Step 3/4: Confirmation",
+        WizardStep::HealthCheck => "Step 4/4: Health Check",
     };
     let title = Paragraph::new(Line::from(vec![
         Span::styled(
@@ -65,6 +67,10 @@ pub fn draw_ui(f: &mut Frame, app: &AppState) {
         WizardStep::Confirmation => {
             draw_summary(f, app, main_chunks[0]);
             draw_save_options(f, app, main_chunks[1]);
+        }
+        WizardStep::HealthCheck => {
+            draw_health_check_info(f, app, main_chunks[0]);
+            draw_health_check_options(f, app, main_chunks[1]);
         }
     }
 
@@ -120,9 +126,7 @@ pub fn draw_service_list(f: &mut Frame, app: &AppState, area: Rect) {
             // Source indicator: config file vs detected process
             let source_indicator = match svc.source {
                 ServiceSource::Config => Span::styled("[C]", Style::default().fg(Color::Blue)),
-                ServiceSource::Detected => {
-                    Span::styled("[D]", Style::default().fg(Color::Magenta))
-                }
+                ServiceSource::Detected => Span::styled("[D]", Style::default().fg(Color::Magenta)),
             };
 
             // Health indicator
@@ -289,7 +293,9 @@ pub fn draw_client_list(f: &mut Frame, app: &AppState, area: Rect) {
             };
 
             // Rewired status indicator
-            let status = if client.already_rewired {
+            let status = if !client.config_exists {
+                Span::styled(" [no config]", Style::default().fg(Color::Red))
+            } else if client.already_rewired {
                 Span::styled(" [rewired]", Style::default().fg(Color::Green))
             } else {
                 Span::styled(" [not rewired]", Style::default().fg(Color::Yellow))
@@ -387,17 +393,35 @@ pub fn draw_client_details(f: &mut Frame, app: &AppState, area: Rect) {
             Span::styled("Config:   ", Style::default().fg(Color::Cyan)),
             Span::raw(client.config_path.display().to_string()),
         ]));
-        lines.push(Line::from(vec![
-            Span::styled("Status:   ", Style::default().fg(Color::Cyan)),
-            if client.already_rewired {
+
+        // Config existence status
+        if !client.config_exists {
+            lines.push(Line::from(vec![
+                Span::styled("Status:   ", Style::default().fg(Color::Cyan)),
                 Span::styled(
-                    "Already rewired to rmcp_mux",
-                    Style::default().fg(Color::Green),
-                )
-            } else {
-                Span::styled("Not yet rewired", Style::default().fg(Color::Yellow))
-            },
-        ]));
+                    "No MCP config file (app installed)",
+                    Style::default().fg(Color::Red),
+                ),
+            ]));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "A new MCP config will be created for this client.",
+                Style::default().fg(Color::Yellow),
+            )));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled("Status:   ", Style::default().fg(Color::Cyan)),
+                if client.already_rewired {
+                    Span::styled(
+                        "Already rewired to rmcp_mux",
+                        Style::default().fg(Color::Green),
+                    )
+                } else {
+                    Span::styled("Not yet rewired", Style::default().fg(Color::Yellow))
+                },
+            ]));
+        }
+
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "Services in this client:",
@@ -405,7 +429,11 @@ pub fn draw_client_details(f: &mut Frame, app: &AppState, area: Rect) {
         )));
 
         if client.services.is_empty() {
-            lines.push(Line::from("  (no services defined)"));
+            if client.config_exists {
+                lines.push(Line::from("  (no MCP services defined yet)"));
+            } else {
+                lines.push(Line::from("  (config will be created with mux services)"));
+            }
         } else {
             for svc in &client.services {
                 lines.push(Line::from(format!("  • {}", svc)));
@@ -414,10 +442,17 @@ pub fn draw_client_details(f: &mut Frame, app: &AppState, area: Rect) {
 
         lines.push(Line::from(""));
         if client.selected {
-            lines.push(Line::from(Span::styled(
-                "This client will be rewired to use rmcp_mux proxy.",
-                Style::default().fg(Color::Green),
-            )));
+            if client.config_exists {
+                lines.push(Line::from(Span::styled(
+                    "This client will be rewired to use rmcp_mux proxy.",
+                    Style::default().fg(Color::Green),
+                )));
+            } else {
+                lines.push(Line::from(Span::styled(
+                    "A new MCP config will be created for this client.",
+                    Style::default().fg(Color::Green),
+                )));
+            }
         } else {
             lines.push(Line::from(Span::styled(
                 "This client will NOT be modified.",
@@ -565,6 +600,141 @@ pub fn draw_save_options(f: &mut Frame, app: &AppState, area: Rect) {
             Style::default().fg(Color::Green),
         )));
     }
+
+    let options = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(border_style)
+                .title("Actions"),
+        )
+        .wrap(Wrap { trim: true });
+
+    f.render_widget(options, area);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Health check panel (Step 4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+pub fn draw_health_check_info(f: &mut Frame, app: &AppState, area: Rect) {
+    let border_style = Style::default().fg(Color::Cyan);
+
+    let selected_servers: Vec<&str> = app
+        .services
+        .iter()
+        .filter(|s| s.selected)
+        .map(|s| s.name.as_str())
+        .collect();
+
+    let selected_clients: Vec<&str> = app
+        .clients
+        .iter()
+        .filter(|c| c.selected)
+        .map(|c| c.kind.as_label())
+        .collect();
+
+    let mut lines: Vec<Line> = vec![
+        Line::from(Span::styled(
+            "Configuration Saved!",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Now verify the configuration works:",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from("1. Go to your MCP client application"),
+        Line::from("2. Check if the MCP servers are working"),
+        Line::from("3. Return here and confirm the result"),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("Configured Servers ({})", selected_servers.len()),
+            Style::default().fg(Color::Cyan),
+        )),
+    ];
+
+    for name in &selected_servers {
+        lines.push(Line::from(format!("  ✓ {}", name)));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        format!("Rewired Clients ({})", selected_clients.len()),
+        Style::default().fg(Color::Cyan),
+    )));
+
+    for name in &selected_clients {
+        lines.push(Line::from(format!("  ✓ {}", name)));
+    }
+
+    let info = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(border_style)
+                .title("STEP 4: Health Check"),
+        )
+        .wrap(Wrap { trim: true });
+
+    f.render_widget(info, area);
+}
+
+pub fn draw_health_check_options(f: &mut Frame, app: &AppState, area: Rect) {
+    let border_style = Style::default().fg(Color::Cyan);
+
+    let choices = [
+        (
+            HealthCheckChoice::Ok,
+            "OK",
+            "Configuration verified - exit wizard",
+        ),
+        (
+            HealthCheckChoice::TryAgain,
+            "Try Again",
+            "Re-run detection and reconfigure",
+        ),
+    ];
+
+    let mut lines: Vec<Line> = vec![
+        Line::from(Span::styled(
+            "Verification",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from("Did the configuration work correctly?"),
+        Line::from(""),
+        Line::from("Use Up/Down to select, Enter to confirm:"),
+        Line::from(""),
+    ];
+
+    for (choice, label, description) in choices {
+        let is_selected = choice == app.health_choice;
+        let prefix = if is_selected { "▶ " } else { "  " };
+        let style = if is_selected {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(format!("[{}]", label), style),
+            Span::raw(" - "),
+            Span::styled(description, Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Tip: Keep this terminal open while testing",
+        Style::default().fg(Color::DarkGray),
+    )));
 
     let options = Paragraph::new(lines)
         .block(

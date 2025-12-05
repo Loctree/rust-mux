@@ -104,7 +104,7 @@ pub fn detect_running_mcp_servers() -> Vec<ServiceEntry> {
     let reader = BufReader::new(&output.stdout[..]);
     let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    for line in reader.lines().flatten() {
+    for line in reader.lines().map_while(Result::ok) {
         let line = line.trim();
 
         // Skip header line

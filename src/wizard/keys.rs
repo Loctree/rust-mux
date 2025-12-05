@@ -8,7 +8,8 @@ use super::persist::{execute_confirm_choice, persist_all};
 use super::services::{check_health, default_server_config, form_from_service, service_from_form};
 use super::types::{
     next_confirm_choice, next_field, previous_confirm_choice, previous_field, AppState,
-    ConfirmChoice, Field, HealthStatus, Panel, ServiceEntry, ServiceSource, WizardStep,
+    ConfirmChoice, Field, HealthCheckChoice, HealthStatus, Panel, ServiceEntry, ServiceSource,
+    WizardStep,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,6 +90,13 @@ pub fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<bool> {
                         // Navigate through save options
                         app.confirm_choice = previous_confirm_choice(app.confirm_choice);
                     }
+                    (WizardStep::HealthCheck, _) => {
+                        // Toggle between Ok and TryAgain
+                        app.health_choice = match app.health_choice {
+                            HealthCheckChoice::Ok => HealthCheckChoice::TryAgain,
+                            HealthCheckChoice::TryAgain => HealthCheckChoice::Ok,
+                        };
+                    }
                     _ => {}
                 }
             }
@@ -115,6 +123,13 @@ pub fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<bool> {
                     (WizardStep::Confirmation, _) => {
                         // Navigate through save options
                         app.confirm_choice = next_confirm_choice(app.confirm_choice);
+                    }
+                    (WizardStep::HealthCheck, _) => {
+                        // Toggle between Ok and TryAgain
+                        app.health_choice = match app.health_choice {
+                            HealthCheckChoice::Ok => HealthCheckChoice::TryAgain,
+                            HealthCheckChoice::TryAgain => HealthCheckChoice::Ok,
+                        };
                     }
                     _ => {}
                 }
@@ -149,6 +164,10 @@ pub fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<bool> {
                 (WizardStep::Confirmation, _) => {
                     // Execute the selected action
                     return execute_confirm_choice(app);
+                }
+                (WizardStep::HealthCheck, _) => {
+                    // Execute health check choice
+                    return execute_health_check_choice(app);
                 }
                 _ => {}
             }
@@ -228,6 +247,9 @@ pub fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<bool> {
                 WizardStep::Confirmation => {
                     // Already at confirmation, do nothing
                 }
+                WizardStep::HealthCheck => {
+                    // Already at last step, do nothing
+                }
             }
         }
 
@@ -256,6 +278,13 @@ pub fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<bool> {
                         "STEP 2: Client Detection - {} clients found | Space: toggle | n: next step | p: previous",
                         client_count
                     );
+                }
+                WizardStep::HealthCheck => {
+                    // Go back to step 3
+                    app.wizard_step = WizardStep::Confirmation;
+                    app.active_panel = Panel::ConfirmDialog;
+                    app.confirm_choice = ConfirmChoice::SaveAll;
+                    app.message = "STEP 3: Confirm - Select action and press Enter".into();
                 }
             }
         }
@@ -385,6 +414,56 @@ fn handle_confirm_dialog_key(app: &mut AppState, key: KeyEvent) -> Result<bool> 
         _ => {}
     }
     Ok(false)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Health check choice handler
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn execute_health_check_choice(app: &mut AppState) -> Result<bool> {
+    match app.health_choice {
+        HealthCheckChoice::Ok => {
+            // Configuration verified, exit wizard
+            app.message = "Configuration verified successfully! Exiting...".into();
+            Ok(true)
+        }
+        HealthCheckChoice::TryAgain => {
+            // Re-run detection and go back to step 1
+            use super::services::load_all_services;
+
+            // Reload services from config and detect running processes
+            if let Ok(services) = load_all_services(&app.config_path) {
+                app.services = services;
+            }
+
+            // Run health checks on all services
+            for svc in &mut app.services {
+                svc.health = check_health(&svc.config);
+            }
+
+            // Clear clients (will be re-detected in step 2)
+            app.clients.clear();
+            app.selected_client = 0;
+
+            // Reset to step 1
+            app.wizard_step = WizardStep::ServerSelection;
+            app.selected_service = 0;
+            app.active_panel = Panel::ServiceList;
+            app.health_choice = HealthCheckChoice::Ok;
+
+            if !app.services.is_empty() {
+                load_service_to_form(app);
+            }
+
+            let selected_count = app.services.iter().filter(|s| s.selected).count();
+            app.message = format!(
+                "STEP 1: Server Detection (retry) - {} servers | Space: toggle | n: next step",
+                selected_count
+            );
+
+            Ok(false)
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

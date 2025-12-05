@@ -1,9 +1,10 @@
 //! Interactive wizard for configuring rmcp_mux services and rewiring MCP clients.
 //!
-//! The wizard provides a three-step TUI flow:
+//! The wizard provides a four-step TUI flow:
 //! 1. Server Detection - detect and select MCP servers
 //! 2. Client Detection - detect and select MCP clients (hosts)
 //! 3. Confirmation - review and save configuration
+//! 4. Health Check - verify configuration works, with option to retry
 
 use std::io::{stdout, IsTerminal};
 use std::path::PathBuf;
@@ -28,15 +29,13 @@ mod services;
 mod types;
 mod ui;
 
-use keys::{handle_key, load_service_to_form};
+use keys::handle_key;
 use services::{check_health, default_server_config, form_from_service, load_all_services};
 use types::{
-    AppState, ConfirmChoice, Field, HealthStatus, Panel, ServiceEntry, ServiceSource, WizardStep,
+    AppState, ConfirmChoice, Field, HealthCheckChoice, HealthStatus, Panel, ServiceEntry,
+    ServiceSource, WizardStep,
 };
 use ui::draw_ui;
-
-// Re-export WizardArgs for use in main.rs
-pub use types::{ClientEntry, FormState};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CLI arguments
@@ -152,6 +151,7 @@ pub async fn run_wizard(args: WizardArgs) -> Result<()> {
         editing: None,
         active_panel: Panel::ServiceList,
         confirm_choice: ConfirmChoice::SaveAll,
+        health_choice: HealthCheckChoice::Ok,
         message: "STEP 1: Server Detection - Space: toggle selection | Tab: switch | Enter: edit | n: next step | q: quit".into(),
         dry_run: args.dry_run,
     };

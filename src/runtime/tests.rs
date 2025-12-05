@@ -13,7 +13,9 @@ use tokio::net::UnixListener;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::sync::{watch, Mutex, Semaphore};
 
-use crate::config::{expand_path, load_config, resolve_params, Config, ResolvedParams, ServerConfig};
+use crate::config::{
+    expand_path, load_config, resolve_params, Config, ResolvedParams, ServerConfig,
+};
 use crate::state::{
     error_response, publish_status, reset_state, set_id, snapshot_for_state, MuxState, Pending,
     ServerStatus, StatusSnapshot,
@@ -611,9 +613,17 @@ async fn initialize_served_from_cache_does_not_queue() {
     });
 
     let max_req = { state.lock().await.max_request_bytes };
-    handle_client_message(cid, msg, &state, &to_server_tx, &active, &status_tx, max_req)
-        .await
-        .expect("handle cached init");
+    handle_client_message(
+        cid,
+        msg,
+        &state,
+        &to_server_tx,
+        &active,
+        &status_tx,
+        max_req,
+    )
+    .await
+    .expect("handle cached init");
 
     assert!(to_server_rx.try_recv().is_err());
 

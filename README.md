@@ -1,52 +1,92 @@
 # rmcp_mux – shared MCP server daemon
 
-Small Rust daemon that lets many MCP clients reuse a single STDIO server process (e.g. `npx @modelcontextprotocol/server-memory`) over a Unix socket. It rewrites JSON-RPC IDs per client, caches `initialize`, restarts the child on failure, and cleans up the socket on exit.
+[![CI](https://github.com/LibraxisAI/rmcp_mux/actions/workflows/ci.yml/badge.svg)](https://github.com/LibraxisAI/rmcp_mux/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-0.2.1-blue.svg)](Cargo.toml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+A Rust daemon that lets many MCP clients reuse a single STDIO server process (e.g. `npx @modelcontextprotocol/server-memory`) over a Unix socket. It rewrites JSON-RPC IDs per client, caches `initialize`, restarts the child on failure, and cleans up the socket on exit.
+
+## Table of Contents
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Interactive Wizard (TUI)](#interactive-wizard-tui)
+- [Subcommands](#subcommands)
+- [Runtime Behavior](#runtime-behavior)
+- [Project Structure](#project-structure)
+- [Testing](#testing)
+- [Contributing](#contributing)
 
 ## Features
-- One child process per service (spawned from `--cmd ...`).
-- Many clients via Unix socket; ID rewriting keeps responses matched to the right client.
-- `initialize` is executed once; later clients get the cached response immediately.
-- Concurrent requests allowed; active client slots limited by `--max-active-clients` (default 5).
-- Notifications are broadcast to all connected clients.
-- Restart-on-exit for the child; pending/waiting requests receive an error on reset.
-- Ctrl+C stops the mux, kills the child, and removes the socket file.
-- Optional JSON status snapshots (`--status-file`) for tray/automation (PID, restarts, queue depth).
-- Optional tray indicator (`--tray`) shows live server status (running/restarting), client and pending counts, initialize cache state, and restart reason.
 
-## Build
-```
+### Core
+- **One child process per service** – spawned from `--cmd ...`
+- **Multiple clients via Unix socket** – ID rewriting keeps responses matched to the right client
+- **Initialize caching** – executed once; later clients get cached response immediately
+- **Concurrent requests** – active client slots limited by `--max-active-clients` (default 5)
+- **Notification broadcasting** – notifications sent to all connected clients
+- **Auto-restart** – child restarts on exit; pending/waiting requests receive error on reset
+- **Graceful shutdown** – Ctrl+C stops mux, kills child, removes socket file
+
+### Monitoring & Status
+- **JSON status snapshots** (`--status-file`) – PID, restarts, queue depth for automation
+- **Optional tray indicator** (`--tray`) – live server status, client/pending counts, restart reason
+- **Health check subcommand** – verify socket reachability
+
+### Configuration
+- **Multi-format configs** – JSON, YAML, TOML with auto-detection
+- **Three-step wizard** – guided TUI for server detection, client rewiring, and config generation
+- **Host scanning** – auto-detect MCP configs in Codex, Cursor, VSCode, Claude, JetBrains
+
+## Quick Start
+
+```bash
+# Build
 cargo build --release
-```
-Binaries live in `target/release/rmcp_mux`.
 
-## Install (curl | sh)
-```
-curl -fsSL https://raw.githubusercontent.com/LibraxisAI/rmcp_mux/main/tools/install.sh | sh
-```
-- Places wrapper in `$HOME/.local/bin/rmcp_mux` and ensures PATH contains cargo bin + wrapper dir.
-- Env overrides: `INSTALL_DIR`, `CARGO_HOME`, `MUX_REF` (branch/tag, default main), `MUX_NO_LOCK=1` to skip `--locked`.
-
-### Built-in proxy (no socat required)
-If your MCP host wants a STDIO command, use the bundled proxy:
-```
-rmcp_mux_proxy --socket /tmp/mcp-memory.sock
-```
-Point host config to `rmcp_mux_proxy` with the matching socket path.
-
-## Run (example: memory server)
-```
+# Run with memory server
 ./target/release/rmcp_mux \
   --socket /tmp/mcp-memory.sock \
   --cmd npx -- @modelcontextprotocol/server-memory \
-  --max-active-clients 5 \
-  --log-level info
+  --max-active-clients 5
 
+# Connect via proxy (for MCP hosts expecting STDIO)
+rmcp_mux_proxy --socket /tmp/mcp-memory.sock
 ```
 
-## Config-driven run (JSON/YAML/TOML)
-- Default config path: `~/.codex/mcp.json` (override via `--config <path>`). Parser auto-detects by extension (`.json`, `.yaml`/`.yml`, `.toml`).
-- JSON:
+## Installation
+
+### From source
+```bash
+cargo build --release
+# Binaries: target/release/rmcp_mux, target/release/rmcp_mux_proxy
 ```
+
+### One-liner (curl | sh)
+```bash
+curl -fsSL https://raw.githubusercontent.com/LibraxisAI/rmcp_mux/main/tools/install.sh | sh
+```
+
+**Environment overrides:**
+- `INSTALL_DIR` – wrapper location (default: `$HOME/.local/bin`)
+- `CARGO_HOME` – cargo home (default: `~/.cargo`)
+- `MUX_REF` – branch/tag/commit (default: `main`)
+- `MUX_NO_LOCK=1` – skip `--locked` flag
+
+### Built-in proxy
+If your MCP host needs a STDIO command, use the bundled proxy instead of `socat`:
+```bash
+rmcp_mux_proxy --socket /tmp/mcp-memory.sock
+```
+
+## Configuration
+
+### Config file formats
+Default path: `~/.codex/mcp.json` (override with `--config <path>`). Parser auto-detects by extension.
+
+**JSON:**
+```json
 {
   "servers": {
     "general-memory": {
@@ -67,141 +107,272 @@ Point host config to `rmcp_mux_proxy` with the matching socket path.
   }
 }
 ```
-- YAML:
-```
+
+**YAML:**
+```yaml
 servers:
   general-memory:
     socket: "~/mcp-sockets/general-memory.sock"
     cmd: "npx"
     args: ["@modelcontextprotocol/server-memory"]
     max_active_clients: 5
-    max_request_bytes: 1048576
-    request_timeout_ms: 30000
-    restart_backoff_ms: 1000
-    restart_backoff_max_ms: 30000
-    max_restarts: 5
-    status_file: "~/.rmcp_servers/rmcp_mux/status.json"
-    lazy_start: false
     tray: true
-    service_name: "general-memory"
 ```
-- TOML:
-```
+
+**TOML:**
+```toml
 [servers.general-memory]
 socket = "~/mcp-sockets/general-memory.sock"
 cmd = "npx"
 args = ["@modelcontextprotocol/server-memory"]
 max_active_clients = 5
-max_request_bytes = 1048576
-request_timeout_ms = 30000
-restart_backoff_ms = 1000
-restart_backoff_max_ms = 30000
-max_restarts = 5
-status_file = "~/.rmcp_servers/rmcp_mux/status.json"
-lazy_start = false
 tray = true
-service_name = "general-memory"
 ```
-- Run using config entry:
-```
+
+### Running with config
+```bash
 ./target/release/rmcp_mux --config ~/.codex/mcp.json --service general-memory
 ```
-- CLI flags still override config (e.g. `--socket`, `--cmd`, `--tray`).
+CLI flags override config values (e.g. `--socket`, `--cmd`, `--tray`).
 
-### Resolution order & defaults
-- `socket` / `cmd`: required (either CLI or config). `--service` is required when `--config` is provided.
-- `args`: CLI `--` tail wins, otherwise config, otherwise empty.
-- `max_active_clients`: CLI default 5 unless overridden by config entry.
-- `lazy_start`: default `false`.
-- `max_request_bytes`: default `1_048_576` (1 MiB).
-- `request_timeout_ms`: default `30_000` (30 s).
-- `restart_backoff_ms`: default `1_000` (1 s), capped by `restart_backoff_max_ms` (default `30_000`).
-- `max_restarts`: default `5` (0 = unlimited).
-- `tray`: default `false`.
-- `service_name`: CLI `--service-name`, else config, else socket file stem, else `rmcp_mux`.
-- `status_file`: optional; accepts `~` and absolute/relative paths.
+### Parameter defaults
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `socket` | required | Unix socket path |
+| `cmd` | required | MCP server command |
+| `args` | `[]` | Arguments for command |
+| `max_active_clients` | `5` | Concurrent client limit |
+| `lazy_start` | `false` | Defer child spawn until first request |
+| `max_request_bytes` | `1048576` | Max request size (1 MiB) |
+| `request_timeout_ms` | `30000` | Request timeout (30s) |
+| `restart_backoff_ms` | `1000` | Initial restart delay (1s) |
+| `restart_backoff_max_ms` | `30000` | Max restart delay (30s) |
+| `max_restarts` | `5` | Restart limit (0 = unlimited) |
+| `tray` | `false` | Enable tray icon |
+| `status_file` | none | Path for JSON status snapshots |
 
-### Interactive wizard (TUI)
-- Launch a guided editor (ratatui) to build/update your mux config:
-```
-rmcp_mux wizard --config ~/.codex/mcp-mux.toml --service general-memory
-```
-- Controls: `↑/↓` move, `Enter` edit field, `Space` toggle tray, `s` save, `q` quit. Saves JSON/YAML/TOML based on the extension; creates a `.bak` before overwriting.
-- `--dry-run` runs the wizard without writing files.
+## Interactive Wizard (TUI)
 
-### Dependency notes
-- `ratatui` + `crossterm` power the TUI wizard; both are pure-Rust and optional (build with `--no-default-features` to skip).
-- `tempfile` is dev-only for isolated FS fixtures in tests.
+The wizard provides a **three-step guided flow** for configuring rmcp_mux and rewiring MCP clients:
 
-### Scan and rewire host configs
-- Detect MCP hosts (Codex, Cursor/VSCode, Claude, JetBrains paths) and build a mux manifest + host snippets that point to the bundled proxy:
+```bash
+rmcp_mux wizard --config ~/.codex/mcp-mux.toml
 ```
-rmcp_mux scan --manifest ~/.codex/mcp-mux.toml --snippet ~/.codex/mcp-mux
+
+### Step 1: Server Detection
+- Detects running MCP server processes via `ps` command
+- Loads existing services from config file
+- Displays servers with selection checkboxes:
+  - `[✓]` selected / `[ ]` unselected
+  - `[C]` config-based / `[D]` detected process
+  - Health status: 🟢 healthy / 🔴 unhealthy / ⚪ unknown
+
+**Controls:**
+- `Space` – toggle server selection
+- `Tab` – switch to editor panel
+- `↑/↓` – navigate list
+- `n` – proceed to Step 2
+
+### Step 2: Client Detection
+- Discovers MCP client applications:
+  - Codex (`~/.codex/config.toml`)
+  - Cursor (`~/Library/Application Support/Cursor/...`)
+  - VSCode (`~/Library/Application Support/Code/...`)
+  - Claude (`~/.config/Claude/claude_config.json`)
+  - JetBrains (`~/Library/Application Support/JetBrains/LLM/mcp.json`)
+- Shows rewire status: `[rewired]` or `[not rewired]`
+- Lists services defined in each client config
+
+**Controls:**
+- `Space` – toggle client selection for rewiring
+- `n` – proceed to Step 3
+- `p` – go back to Step 1
+
+### Step 3: Confirmation
+- Displays summary of selected servers and clients
+- Save options:
+  - **Save All** – save mux config AND rewire selected clients
+  - **Mux Only** – save mux config only
+  - **Clipboard** – copy config to clipboard (`pbcopy` on macOS)
+  - **Back** – return to Step 2
+  - **Exit** – exit without saving
+
+**Features:**
+- Creates `.bak` backup files for all modified configs
+- `--dry-run` mode to preview changes without writing
+
+### Wizard options
+```bash
+rmcp_mux wizard \
+  --config ~/.codex/mcp-mux.toml \
+  --service general-memory \
+  --dry-run
 ```
-- Rewire a host config in-place (creates `.bak`; add `--dry-run` to preview):
+
+## Subcommands
+
+### `scan` – Discover and generate configs
+```bash
+# Generate mux manifest and host snippets
+rmcp_mux scan \
+  --manifest ~/.codex/mcp-mux.toml \
+  --snippet ~/.codex/mcp-mux \
+  --socket-dir ~/.rmcp_servers/rmcp_mux/sockets
 ```
+
+### `rewire` – Update host configs
+```bash
+# Rewire a host config to use rmcp_mux proxy (creates .bak backup)
 rmcp_mux rewire --host codex --socket-dir ~/.rmcp_servers/rmcp_mux/sockets
+
+# Preview changes without writing
+rmcp_mux rewire --host codex --dry-run
 ```
-- Snippets use the installed `rmcp_mux_proxy` binary: `command = "rmcp_mux_proxy"; args = ["--socket", "<service.sock>"]`.
-- Check whether a host is already pointed at the mux proxy:
-```
+
+### `status` – Check rewire status
+```bash
 rmcp_mux status --host codex --proxy-cmd rmcp_mux_proxy
 ```
 
-### Health check
-- Verify that config resolves and the mux socket is reachable:
-```
+### `health` – Verify connectivity
+```bash
+# Direct check
 rmcp_mux health --socket /tmp/mcp-memory.sock --cmd npx -- @modelcontextprotocol/server-memory
-```
-- With a config file:
-```
+
+# Config-based check
 rmcp_mux health --config ~/.codex/mcp.json --service general-memory
 ```
 
-## Tray status (optional)
-- Run with `--tray` to spawn a small status icon. The drawer lists service name, server state, connected/active clients, pending requests, initialize cache state, and restart count/reason.
-- Click “Quit mux” in the tray menu to stop the daemon (propagates shutdown to the child and cleans the socket).
-- To feed your own UI/monitor, write status snapshots to JSON: `rmcp_mux --status-file ~/.rmcp_servers/rmcp_mux/status.json ...`. The file is updated on every state change.
+### `proxy` – STDIO proxy
+```bash
+rmcp_mux proxy --socket /tmp/mcp-memory.sock
 ```
 
-### Proxy config for MCP hosts
-Use the bundled proxy instead of `socat`:
-```
-rmcp_mux_proxy --socket /tmp/mcp-memory.sock
-```
-Do this per service (memory, brave-search, etc.) with distinct sockets and mux instances.
+## Runtime Behavior
 
-### launchd (macOS) example
-A template lives at `tools/launchd/rmcp_mux.sample.plist`. Copy to `~/Library/LaunchAgents/`, replace paths/user, then:
-```
-launchctl load -w ~/Library/LaunchAgents/rmcp_mux.general-memory.plist
-```
-Label should be unique per service; logs go to the paths defined in the plist.
+### Client handling
+1. New client → assigned `client_id`
+2. Messages get `global_id = c<client>:<seq>`
+3. Responses demuxed back to original client/local ID
+4. First `initialize` hits server; response cached and fanned out to waiters
+5. Later `initialize` calls answered from cache
 
-## Runtime behavior
-- New client → assigned `client_id`, messages get `global_id = c<client>:<seq>`.
-- Responses are demuxed back to the original client/local ID.
-- First `initialize` hits the server; the response is cached and fanned out to waiters. Later `initialize` calls are answered from cache.
-- Guards: max request size (default 1 MiB), request timeout (default 30 s) with cleanup of pending calls, exponential restart backoff (1 s → 30 s) with a default limit of 5 restarts, and optional lazy start (defer child spawn until the first request).
-- If the child exits or write/read fails, the mux restarts it, clears cache/pending, and sends error responses to affected clients.
-- On shutdown (Ctrl+C), the mux stops the child and deletes the socket.
+### Safety guards
+- **Max request size** – default 1 MiB
+- **Request timeout** – default 30s with cleanup of pending calls
+- **Exponential restart backoff** – 1s → 30s with 5 restart limit
+- **Lazy start** – defer child spawn until first request
 
-## Options
-- `--socket <path>`: Unix socket path.
-- `--cmd <prog>` `-- <args>`: command to run the MCP server.
-- `--max-active-clients <n>`: limit of concurrently active clients (default 5).
-- `--log-level <level>`: trace|debug|info|warn|error (default info).
+### Error handling
+- Child exit or I/O failure → restart child, clear cache/pending, send errors to affected clients
+- Graceful shutdown (Ctrl+C) → stop child, delete socket
 
-## Tests and coverage
+## Tray Status (optional)
+
+Run with `--tray` to spawn a status icon showing:
+- Service name and server state
+- Connected/active clients
+- Pending requests
+- Initialize cache state
+- Restart count and reason
+
+Click "Quit mux" in the tray menu to stop the daemon.
+
+For custom monitoring, write status snapshots:
+```bash
+rmcp_mux --status-file ~/.rmcp_servers/rmcp_mux/status.json ...
 ```
+
+## Project Structure
+
+```
+rmcp_mux/
+├── src/
+│   ├── main.rs           # CLI entry point
+│   ├── config.rs         # Config types and loading
+│   ├── state.rs          # MuxState, StatusSnapshot, helpers
+│   ├── scan.rs           # Host discovery and rewiring
+│   ├── tray.rs           # Tray icon (feature-gated)
+│   ├── bin/
+│   │   └── rmcp_mux_proxy.rs  # Standalone STDIO proxy
+│   ├── runtime/          # Mux daemon runtime
+│   │   ├── mod.rs        # Main loop, health check
+│   │   ├── types.rs      # ServerEvent, constants
+│   │   ├── client.rs     # Client connection handling
+│   │   ├── server.rs     # Child process management
+│   │   ├── proxy.rs      # STDIO proxy
+│   │   ├── status.rs     # Status file writing
+│   │   └── tests.rs      # Runtime tests
+│   └── wizard/           # Interactive TUI wizard
+│       ├── mod.rs        # Entry point
+│       ├── types.rs      # WizardStep, ServiceEntry, etc.
+│       ├── services.rs   # Server detection, health checks
+│       ├── clients.rs    # Client detection
+│       ├── ui.rs         # Ratatui drawing
+│       ├── keys.rs       # Key event handling
+│       └── persist.rs    # Config saving, rewiring
+├── tools/
+│   ├── install.sh        # One-liner installer
+│   ├── launchd/          # macOS launchd templates
+│   └── githooks/         # Git hooks
+├── public/
+│   └── rmcp_mux_icon.png # Tray icon
+└── .ai-agents/           # AI agent workspace
+    └── AI_GUIDELINES.md  # Guidelines for AI agents
+```
+
+## Testing
+
+```bash
+# Run all tests
 cargo test
+
+# Run tests without tray feature (for CI/headless)
+cargo test --no-default-features
+
+# Linting
 cargo clippy --all-targets --all-features
+
+# Coverage
 cargo tarpaulin --all-targets --timeout 120
 ```
-Current unit tests cover ID rewriting, initialize caching, and reset fan-out. Integration tests with a fake server can be added to raise coverage.
 
-## Notes and TODOs
-- Extend health to include initialize ping and optional metrics (per client / per request).
-- Consider persistent initialize params after child restart (auto re-init).
-- Add configurable child restart backoff and max retries.
-- Expand host detection/rewire coverage and add automated host-side validation.
+**Test coverage includes:**
+- ID rewriting and error responses
+- Initialize caching and fan-out
+- Reset state broadcasting
+- Config loading (JSON/YAML/TOML)
+- Parameter resolution and defaults
+- Health checks
+- Status file writing
+- Proxy forwarding
+
+## launchd (macOS)
+
+Template at `tools/launchd/rmcp_mux.sample.plist`:
+```bash
+cp tools/launchd/rmcp_mux.sample.plist ~/Library/LaunchAgents/rmcp_mux.general-memory.plist
+# Edit paths and user
+launchctl load -w ~/Library/LaunchAgents/rmcp_mux.general-memory.plist
+```
+
+## Dependency Notes
+
+- `ratatui` + `crossterm` – TUI wizard (pure Rust)
+- `tray-icon` + `image` – optional tray feature
+- `tokio` – async runtime
+- `rmcp` – JSON-RPC message codec
+- `tempfile` – dev-only for test fixtures
+
+Build without optional deps:
+```bash
+cargo build --no-default-features
+```
+
+## Contributing
+
+See [.ai-agents/AI_GUIDELINES.md](.ai-agents/AI_GUIDELINES.md) for development guidelines.
+
+## License
+
+MIT

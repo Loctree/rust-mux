@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use crate::config::{expand_path, Config};
 use crate::scan::{rewire_host, HostFile, HostFormat};
 
-use super::types::{AppState, ConfirmChoice, Panel, WizardStep};
+use super::types::{AppState, ConfirmChoice, HealthCheckChoice, Panel, WizardStep};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Config building
@@ -118,23 +118,31 @@ pub fn execute_confirm_choice(app: &mut AppState) -> Result<bool> {
                 // Rewire selected clients
                 rewire_selected_clients(app)?;
             }
+            // Move to health check step
+            app.wizard_step = WizardStep::HealthCheck;
+            app.active_panel = Panel::ServiceList;
+            app.health_choice = HealthCheckChoice::Ok;
             app.message = if app.dry_run {
-                "Dry run: config would be saved and clients rewired. Exiting...".into()
+                "STEP 4: Health Check (dry-run) - Verify config in your client, then confirm".into()
             } else {
-                "Configuration saved and clients rewired!".into()
+                "STEP 4: Health Check - Verify config in your client, then confirm here".into()
             };
-            Ok(true)
+            Ok(false)
         }
         ConfirmChoice::SaveMuxOnly => {
             if !app.dry_run {
                 persist_all(app)?;
             }
+            // Move to health check step
+            app.wizard_step = WizardStep::HealthCheck;
+            app.active_panel = Panel::ServiceList;
+            app.health_choice = HealthCheckChoice::Ok;
             app.message = if app.dry_run {
-                "Dry run: mux config would be saved. Exiting...".into()
+                "STEP 4: Health Check (dry-run) - Verify config in your client, then confirm".into()
             } else {
-                "Mux configuration saved!".into()
+                "STEP 4: Health Check - Verify config in your client, then confirm here".into()
             };
-            Ok(true)
+            Ok(false)
         }
         ConfirmChoice::CopyToClipboard => {
             // Build config string for clipboard

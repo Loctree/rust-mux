@@ -1,6 +1,43 @@
 # Changelog
 
-## 0.2.0 - 2025-11-24
+All notable changes to this project will be documented in this file.
+
+## [0.2.1] - 2025-11-27
+
+### Added
+- **Three-step wizard flow** for comprehensive MCP configuration:
+  - **Step 1: Server Detection** – Detects running MCP server processes via `ps`, loads existing config, allows selection with `Space`, shows health status indicators.
+  - **Step 2: Client Detection** – Discovers MCP client applications (Codex, Cursor, VSCode, Claude, JetBrains), shows rewire status, allows selection for rewiring.
+  - **Step 3: Confirmation** – Summary of selections with save options: Save All, Mux Only, Clipboard, Back, Exit.
+- Clipboard support (`pbcopy` on macOS) for copying config without writing files.
+- Client rewiring functionality – automatically updates client configs to use `rmcp_mux_proxy`.
+- Health status indicators in wizard: green dot (healthy), red dot (unhealthy), gray circle (unknown).
+- Source indicators in wizard: `[C]` for config-based servers, `[D]` for detected processes.
+
+### Changed
+- **Major refactoring** of `wizard.rs` (1829 LOC) into modular structure:
+  - `wizard/types.rs` – Enums and structs (WizardStep, Field, Panel, ServiceEntry, ClientEntry, etc.)
+  - `wizard/services.rs` – Service loading, MCP process detection, health checks
+  - `wizard/clients.rs` – Client (host application) detection
+  - `wizard/ui.rs` – All UI drawing functions (ratatui)
+  - `wizard/keys.rs` – Key event handling
+  - `wizard/persist.rs` – Config persistence and client rewiring
+  - `wizard/mod.rs` – Entry point and re-exports
+- **Major refactoring** of `runtime.rs` (1596 LOC) into modular structure:
+  - `runtime/types.rs` – ServerEvent and constants (MAX_QUEUE, MAX_PENDING)
+  - `runtime/client.rs` – Client connection handling
+  - `runtime/server.rs` – MCP child process management with restart logic
+  - `runtime/proxy.rs` – STDIO proxy for mux socket
+  - `runtime/status.rs` – Status file writing
+  - `runtime/mod.rs` – Main mux loop, health check, timeout reaper
+  - `runtime/tests.rs` – All runtime tests (753 LOC)
+- Improved wizard navigation: `n` for next step, `p` for previous step.
+- Backup files (`.bak`) created for all modified configs.
+
+### Fixed
+- Redundant `scan_host_file` calls in client detection – now scans once and reuses result.
+
+## [0.2.0] - 2025-11-24
 
 ### Added
 - Optional tray icon (`--tray`) showing live server status, client and pending counts, and restart reasons. ([5eefde4](https://github.com/LibraxisAI/rmcp_mux/commit/5eefde4))
@@ -13,9 +50,24 @@
 ### Changed
 - Refactored mux state management and tray functionality into dedicated `state` and `tray` modules, with tray dependencies gated behind an optional `tray` feature; CI updated to run with `--no-default-features`. ([0d60764](https://github.com/LibraxisAI/rmcp_mux/commit/0d60764), [ad2b9aa](https://github.com/LibraxisAI/rmcp_mux/commit/ad2b9aa))
 
-## 0.1.5
-- Added JSON status snapshots (`--status-file` / `status_file`) including PID, queue depth, request limits, restart/backoff settings.
+## [0.1.5] - 2025-11-20
+
+### Added
+- JSON status snapshots (`--status-file` / `status_file`) including PID, queue depth, request limits, restart/backoff settings.
 - Hardened runtime: lazy child start, request size guard, request timeouts, capped restart backoff, max restarts.
-- Config/Wizard/Scan updated to surface new fields; defaults documented in README.
 - Status writer task for tray/automation; MuxState now tracks queue depth and child PID.
+
+### Changed
+- Config/Wizard/Scan updated to surface new fields; defaults documented in README.
 - Tests cover initialize cache, resets, status snapshots, and proxy; CI runs fmt/clippy/tests/tarpaulin with `--no-default-features` (tray off in CI).
+
+## [0.1.0] - 2025-11-15
+
+### Added
+- Initial release of rmcp_mux.
+- Single MCP server child process management.
+- Unix socket listener for multiple clients.
+- JSON-RPC ID rewriting per client.
+- Initialize request caching and fan-out.
+- Child process restart on failure.
+- Basic CLI interface with `--socket`, `--cmd`, `--max-active-clients`, `--log-level`.

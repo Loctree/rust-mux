@@ -23,7 +23,7 @@ mod status;
 mod types;
 
 pub use proxy::run_proxy;
-pub use types::{MAX_PENDING, MAX_QUEUE};
+pub use types::MAX_QUEUE;
 
 use client::handle_client;
 use server::{handle_server_events, server_manager};
@@ -169,7 +169,13 @@ pub async fn run_mux(params: ResolvedParams) -> Result<()> {
     let router_active = active_clients.clone();
     let status_for_router = status_tx.clone();
     tokio::spawn(async move {
-        handle_server_events(router_state, router_active, status_for_router, server_events_rx).await;
+        handle_server_events(
+            router_state,
+            router_active,
+            status_for_router,
+            server_events_rx,
+        )
+        .await;
     });
 
     // Child process manager
@@ -180,10 +186,22 @@ pub async fn run_mux(params: ResolvedParams) -> Result<()> {
     let to_server_tx_for_server = to_server_tx.clone();
     tokio::spawn(async move {
         if let Err(e) = server_manager(
-            cmd.clone(), args.clone(), to_server_rx, to_server_tx_for_server,
-            server_events_tx, server_state, server_active, status_for_server,
-            server_shutdown, lazy_start, restart_backoff, restart_backoff_max, max_restarts,
-        ).await {
+            cmd.clone(),
+            args.clone(),
+            to_server_rx,
+            to_server_tx_for_server,
+            server_events_tx,
+            server_state,
+            server_active,
+            status_for_server,
+            server_shutdown,
+            lazy_start,
+            restart_backoff,
+            restart_backoff_max,
+            max_restarts,
+        )
+        .await
+        {
             error!("server manager exited with error: {e}");
         }
     });

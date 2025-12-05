@@ -4,7 +4,7 @@ umask 022
 
 # rmcp_mux install script
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/LibraxisAI/rmcp_mux/main/tools/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/Loctree/rmcp-mux/main/tools/install.sh | sh
 # Env overrides:
 #   INSTALL_DIR   where to place the runnable `rmcp_mux` wrapper (default: $HOME/.local/bin)
 #   CARGO_HOME    override cargo home (default: ~/.cargo)

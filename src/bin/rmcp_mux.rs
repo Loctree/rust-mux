@@ -1,21 +1,20 @@
+//! rmcp_mux CLI binary
+//!
+//! This is the command-line interface for rmcp_mux. For library usage,
+//! see the `rmcp_mux` crate documentation.
+
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Result};
 use clap::{Args, Parser, Subcommand};
 use tracing_subscriber::filter::LevelFilter;
 
-mod config;
-mod runtime;
-mod scan;
-mod state;
-#[cfg(feature = "tray")]
-mod tray;
-mod wizard;
-
-use crate::config::{expand_path, load_config, resolve_params};
-use crate::runtime::{health_check, run_mux, run_proxy};
-use crate::scan::{run_rewire_cmd, run_scan_cmd, run_status_cmd, RewireArgs, ScanArgs, StatusArgs};
-use crate::wizard::WizardArgs;
+use rmcp_mux::config::{expand_path, load_config, resolve_params, CliOptions};
+use rmcp_mux::runtime::{health_check, run_mux, run_proxy};
+use rmcp_mux::scan::{
+    run_rewire_cmd, run_scan_cmd, run_status_cmd, RewireArgs, ScanArgs, StatusArgs,
+};
+use rmcp_mux::wizard::WizardArgs;
 
 /// Robust MCP mux: single MCP server child, many clients via UNIX socket,
 /// initialize cache, ID rewriting, child restarts, and active client limit.
@@ -115,7 +114,7 @@ async fn main() -> Result<()> {
 
     match &cli.command {
         Some(CliCommand::Wizard(wargs)) => {
-            wizard::run_wizard(wargs.clone()).await?;
+            rmcp_mux::wizard::run_wizard(wargs.clone()).await?;
             return Ok(());
         }
         Some(CliCommand::Scan(args)) => {
@@ -182,4 +181,53 @@ async fn run_health(cli: Cli) -> Result<()> {
     health_check(&params).await?;
     println!("OK: connected to {}", params.socket.display());
     Ok(())
+}
+
+// Implement CliOptions trait for the Cli struct
+impl CliOptions for Cli {
+    fn socket(&self) -> Option<PathBuf> {
+        self.socket.clone()
+    }
+    fn cmd(&self) -> Option<String> {
+        self.cmd.clone()
+    }
+    fn args(&self) -> Vec<String> {
+        self.args.clone()
+    }
+    fn max_active_clients(&self) -> usize {
+        self.max_active_clients
+    }
+    fn lazy_start(&self) -> Option<bool> {
+        self.lazy_start
+    }
+    fn max_request_bytes(&self) -> Option<usize> {
+        self.max_request_bytes
+    }
+    fn request_timeout_ms(&self) -> Option<u64> {
+        self.request_timeout_ms
+    }
+    fn restart_backoff_ms(&self) -> Option<u64> {
+        self.restart_backoff_ms
+    }
+    fn restart_backoff_max_ms(&self) -> Option<u64> {
+        self.restart_backoff_max_ms
+    }
+    fn max_restarts(&self) -> Option<u64> {
+        self.max_restarts
+    }
+    fn log_level(&self) -> String {
+        self.log_level.clone()
+    }
+    fn tray(&self) -> bool {
+        self.tray
+    }
+    fn service_name(&self) -> Option<String> {
+        self.service_name.clone()
+    }
+    fn service(&self) -> Option<String> {
+        self.service.clone()
+    }
+    fn status_file(&self) -> Option<PathBuf> {
+        self.status_file.clone()
+    }
 }

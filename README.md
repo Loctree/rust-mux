@@ -1,14 +1,18 @@
-# rmcp_mux – shared MCP server daemon
+# rmcp_mux – MCP Server Multiplexer
 
-[![CI](https://github.com/LibraxisAI/rmcp_mux/actions/workflows/ci.yml/badge.svg)](https://github.com/LibraxisAI/rmcp_mux/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.2.1-blue.svg)](Cargo.toml)
+[![CI](https://github.com/Loctree/rmcp-mux/actions/workflows/ci.yml/badge.svg)](https://github.com/Loctree/rmcp-mux/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/rmcp_mux.svg)](https://crates.io/crates/rmcp_mux)
+[![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](Cargo.toml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A Rust daemon that lets many MCP clients reuse a single STDIO server process (e.g. `npx @modelcontextprotocol/server-memory`) over a Unix socket. It rewrites JSON-RPC IDs per client, caches `initialize`, restarts the child on failure, and cleans up the socket on exit.
+A Rust library and daemon that lets many MCP clients reuse a single STDIO server process (e.g. `npx @modelcontextprotocol/server-memory`) over a Unix socket. It rewrites JSON-RPC IDs per client, caches `initialize`, restarts the child on failure, and cleans up the socket on exit.
+
+**NEW in 0.3.0**: Now available as an embeddable library! Integrate MCP multiplexing directly into your Rust application.
 
 ## Table of Contents
 - [Features](#features)
-- [Quick Start](#quick-start)
+- [Library Usage](#library-usage) ⭐ NEW
+- [Quick Start (CLI)](#quick-start-cli)
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Interactive Wizard (TUI)](#interactive-wizard-tui)
@@ -39,7 +43,140 @@ A Rust daemon that lets many MCP clients reuse a single STDIO server process (e.
 - **Three-step wizard** – guided TUI for server detection, client rewiring, and config generation
 - **Host scanning** – auto-detect MCP configs in Codex, Cursor, VSCode, Claude, JetBrains
 
-## Quick Start
+## Library Usage
+
+Add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+rmcp_mux = { version = "0.3", default-features = false }
+```
+
+### Basic Example - Single Mux Server
+
+```rust
+use rmcp_mux::{MuxConfig, run_mux_server};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let config = MuxConfig::new("/tmp/my-mcp.sock", "npx")
+        .with_args(vec!["-y".into(), "@anthropic/mcp-server".into()])
+        .with_max_clients(10)
+        .with_service_name("my-mcp-server");
+
+    run_mux_server(config).await
+}
+```
+
+### Multiple Mux Instances (Single Process)
+
+Perfect for tools like **loctree** that need to run multiple MCP services:
+
+```rust
+use rmcp_mux::{MuxConfig, spawn_mux_server, MuxHandle};
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // Define your MCP services
+    let services = vec![
+        ("memory", "/tmp/mcp-memory.sock", "npx", vec!["@mcp/server-memory"]),
+        ("filesystem", "/tmp/mcp-fs.sock", "npx", vec!["@mcp/server-filesystem"]),
+        ("brave-search", "/tmp/mcp-brave.sock", "npx", vec!["@mcp/server-brave"]),
+    ];
+
+    // Spawn all services in a single process
+    let mut handles: Vec<MuxHandle> = Vec::new();
+    for (name, socket, cmd, args) in services {
+        let config = MuxConfig::new(socket, cmd)
+            .with_args(args.into_iter().map(String::from).collect())
+            .with_service_name(name)
+            .with_request_timeout(Duration::from_secs(60));
+
+        handles.push(spawn_mux_server(config).await?);
+    }
+
+    println!("Running {} MCP services in single process", handles.len());
+
+    // Wait for all to complete (or shutdown signal)
+    for handle in handles {
+        handle.wait().await?;
+    }
+    Ok(())
+}
+```
+
+### Programmatic Shutdown
+
+```rust
+use rmcp_mux::{MuxConfig, spawn_mux_server};
+use tokio::time::{sleep, Duration};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let handle = spawn_mux_server(
+        MuxConfig::new("/tmp/mcp.sock", "my-server")
+    ).await?;
+
+    // Run for 60 seconds, then shutdown
+    sleep(Duration::from_secs(60)).await;
+    handle.shutdown();
+    handle.wait().await?;
+
+    Ok(())
+}
+```
+
+### With External CancellationToken
+
+For advanced integration with your own shutdown logic:
+
+```rust
+use rmcp_mux::{MuxConfig, ResolvedParams, run_mux_with_shutdown};
+use tokio_util::sync::CancellationToken;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let shutdown = CancellationToken::new();
+    let shutdown_clone = shutdown.clone();
+
+    // Your own shutdown logic
+    tokio::spawn(async move {
+        // Wait for your application's shutdown signal
+        // ...
+        shutdown_clone.cancel();
+    });
+
+    let config = MuxConfig::new("/tmp/mcp.sock", "my-server");
+    run_mux_with_shutdown(config.into(), shutdown).await
+}
+```
+
+### Health Check
+
+```rust
+use rmcp_mux::check_health;
+
+async fn verify_service() -> bool {
+    check_health("/tmp/mcp-memory.sock").await.is_ok()
+}
+```
+
+### Feature Flags
+
+| Feature | Default | Description |
+|---------|---------|-------------|
+| `cli` | ✓ | CLI binary, wizard, scan commands |
+| `tray` | ✓ | System tray icon support |
+
+For library-only usage (minimal dependencies):
+
+```toml
+[dependencies]
+rmcp_mux = { version = "0.3", default-features = false }
+```
+
+## Quick Start (CLI)
 
 ```bash
 # Build
@@ -65,7 +202,7 @@ cargo build --release
 
 ### One-liner (curl | sh)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/LibraxisAI/rmcp_mux/main/tools/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Loctree/rmcp-mux/main/tools/install.sh | sh
 ```
 
 **Environment overrides:**
@@ -288,22 +425,23 @@ rmcp_mux --status-file ~/.rmcp_servers/rmcp_mux/status.json ...
 ```
 rmcp_mux/
 ├── src/
-│   ├── main.rs           # CLI entry point
-│   ├── config.rs         # Config types and loading
+│   ├── lib.rs            # Library entry point, MuxConfig, public API
+│   ├── config.rs         # Config types, CliOptions trait, loading
 │   ├── state.rs          # MuxState, StatusSnapshot, helpers
-│   ├── scan.rs           # Host discovery and rewiring
-│   ├── tray.rs           # Tray icon (feature-gated)
+│   ├── scan.rs           # Host discovery and rewiring (cli feature)
+│   ├── tray.rs           # Tray icon (tray feature)
 │   ├── bin/
-│   │   └── rmcp_mux_proxy.rs  # Standalone STDIO proxy
-│   ├── runtime/          # Mux daemon runtime
-│   │   ├── mod.rs        # Main loop, health check
+│   │   ├── rmcp_mux.rs       # CLI binary (cli feature)
+│   │   └── rmcp_mux_proxy.rs # STDIO proxy binary (cli feature)
+│   ├── runtime/          # Core mux daemon (always available)
+│   │   ├── mod.rs        # run_mux, run_mux_internal, health_check
 │   │   ├── types.rs      # ServerEvent, constants
 │   │   ├── client.rs     # Client connection handling
 │   │   ├── server.rs     # Child process management
-│   │   ├── proxy.rs      # STDIO proxy
+│   │   ├── proxy.rs      # STDIO proxy logic
 │   │   ├── status.rs     # Status file writing
 │   │   └── tests.rs      # Runtime tests
-│   └── wizard/           # Interactive TUI wizard
+│   └── wizard/           # Interactive TUI wizard (cli feature)
 │       ├── mod.rs        # Entry point
 │       ├── types.rs      # WizardStep, ServiceEntry, etc.
 │       ├── services.rs   # Server detection, health checks
@@ -320,6 +458,17 @@ rmcp_mux/
 └── .ai-agents/           # AI agent workspace
     └── AI_GUIDELINES.md  # Guidelines for AI agents
 ```
+
+### Module Visibility
+
+| Module | Feature | Public API |
+|--------|---------|------------|
+| `runtime` | always | `run_mux`, `run_mux_internal`, `health_check`, `run_proxy` |
+| `config` | always | `Config`, `ResolvedParams`, `MuxConfig`, `CliOptions` |
+| `state` | always | `MuxState`, `StatusSnapshot`, `ServerStatus` |
+| `scan` | cli | `run_scan_cmd`, `run_rewire_cmd`, `run_status_cmd` |
+| `wizard` | cli | `run_wizard`, `WizardArgs` |
+| `tray` | tray | Internal (started via `MuxConfig::with_tray(true)`) |
 
 ## Testing
 

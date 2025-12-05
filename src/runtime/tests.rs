@@ -14,7 +14,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::sync::{watch, Mutex, Semaphore};
 
 use crate::config::{
-    expand_path, load_config, resolve_params, Config, ResolvedParams, ServerConfig,
+    expand_path, load_config, resolve_params, CliOptions, Config, ResolvedParams, ServerConfig,
 };
 use crate::state::{
     error_response, publish_status, reset_state, set_id, snapshot_for_state, MuxState, Pending,
@@ -25,6 +25,74 @@ use super::client::handle_client_message;
 use super::health_check;
 use super::server::handle_server_message;
 use super::status::spawn_status_writer;
+
+/// Test CLI options struct for resolve_params tests
+#[derive(Default)]
+struct TestCli {
+    socket: Option<PathBuf>,
+    cmd: Option<String>,
+    args: Vec<String>,
+    max_active_clients: usize,
+    lazy_start: Option<bool>,
+    max_request_bytes: Option<usize>,
+    request_timeout_ms: Option<u64>,
+    restart_backoff_ms: Option<u64>,
+    restart_backoff_max_ms: Option<u64>,
+    max_restarts: Option<u64>,
+    log_level: String,
+    tray: bool,
+    service_name: Option<String>,
+    service: Option<String>,
+    status_file: Option<PathBuf>,
+}
+
+impl CliOptions for TestCli {
+    fn socket(&self) -> Option<PathBuf> {
+        self.socket.clone()
+    }
+    fn cmd(&self) -> Option<String> {
+        self.cmd.clone()
+    }
+    fn args(&self) -> Vec<String> {
+        self.args.clone()
+    }
+    fn max_active_clients(&self) -> usize {
+        self.max_active_clients
+    }
+    fn lazy_start(&self) -> Option<bool> {
+        self.lazy_start
+    }
+    fn max_request_bytes(&self) -> Option<usize> {
+        self.max_request_bytes
+    }
+    fn request_timeout_ms(&self) -> Option<u64> {
+        self.request_timeout_ms
+    }
+    fn restart_backoff_ms(&self) -> Option<u64> {
+        self.restart_backoff_ms
+    }
+    fn restart_backoff_max_ms(&self) -> Option<u64> {
+        self.restart_backoff_max_ms
+    }
+    fn max_restarts(&self) -> Option<u64> {
+        self.max_restarts
+    }
+    fn log_level(&self) -> String {
+        self.log_level.clone()
+    }
+    fn tray(&self) -> bool {
+        self.tray
+    }
+    fn service_name(&self) -> Option<String> {
+        self.service_name.clone()
+    }
+    fn service(&self) -> Option<String> {
+        self.service.clone()
+    }
+    fn status_file(&self) -> Option<PathBuf> {
+        self.status_file.clone()
+    }
+}
 
 fn test_state_with_max(max: usize) -> Arc<Mutex<MuxState>> {
     Arc::new(Mutex::new(MuxState::new(
@@ -292,7 +360,7 @@ fn resolve_params_overrides_from_config() {
         )]),
     };
 
-    let cli = crate::Cli {
+    let cli = TestCli {
         socket: None,
         cmd: None,
         args: vec![],
@@ -306,7 +374,6 @@ fn resolve_params_overrides_from_config() {
         log_level: "info".into(),
         tray: false,
         service_name: None,
-        config: None,
         service: Some("svc".into()),
         status_file: None,
     };
@@ -326,7 +393,7 @@ fn resolve_params_requires_service_with_config() {
     let cfg = Config {
         servers: HashMap::new(),
     };
-    let cli = crate::Cli {
+    let cli = TestCli {
         socket: None,
         cmd: None,
         args: vec![],
@@ -340,7 +407,6 @@ fn resolve_params_requires_service_with_config() {
         log_level: "info".into(),
         tray: false,
         service_name: None,
-        config: None,
         service: None,
         status_file: None,
     };
@@ -371,7 +437,7 @@ fn resolve_params_cli_overrides_socket() {
             },
         )]),
     };
-    let cli = crate::Cli {
+    let cli = TestCli {
         socket: Some(PathBuf::from("/tmp/cli.sock")),
         cmd: None,
         args: vec![],
@@ -385,7 +451,6 @@ fn resolve_params_cli_overrides_socket() {
         log_level: "info".into(),
         tray: false,
         service_name: None,
-        config: None,
         service: Some("svc".into()),
         status_file: None,
     };
@@ -395,7 +460,7 @@ fn resolve_params_cli_overrides_socket() {
 
 #[test]
 fn resolve_params_applies_defaults_without_config() {
-    let cli = crate::Cli {
+    let cli = TestCli {
         socket: Some(PathBuf::from("/tmp/test.sock")),
         cmd: Some("echo".into()),
         args: vec![],
@@ -409,7 +474,6 @@ fn resolve_params_applies_defaults_without_config() {
         log_level: "info".into(),
         tray: false,
         service_name: None,
-        config: None,
         service: None,
         status_file: None,
     };
@@ -450,7 +514,7 @@ fn resolve_params_prefers_cli_over_config_for_timeouts() {
             },
         )]),
     };
-    let cli = crate::Cli {
+    let cli = TestCli {
         socket: None,
         cmd: None,
         args: vec![],
@@ -464,7 +528,6 @@ fn resolve_params_prefers_cli_over_config_for_timeouts() {
         log_level: "info".into(),
         tray: false,
         service_name: None,
-        config: None,
         service: Some("svc".into()),
         status_file: None,
     };
@@ -479,7 +542,7 @@ fn resolve_params_prefers_cli_over_config_for_timeouts() {
 
 #[test]
 fn resolve_params_errors_when_socket_missing() {
-    let cli = crate::Cli {
+    let cli = TestCli {
         socket: None,
         cmd: Some("echo".into()),
         args: vec![],
@@ -493,7 +556,6 @@ fn resolve_params_errors_when_socket_missing() {
         log_level: "info".into(),
         tray: false,
         service_name: None,
-        config: None,
         service: None,
         status_file: None,
     };
@@ -503,7 +565,7 @@ fn resolve_params_errors_when_socket_missing() {
 
 #[test]
 fn resolve_params_errors_when_cmd_missing() {
-    let cli = crate::Cli {
+    let cli = TestCli {
         socket: Some(PathBuf::from("/tmp/x.sock")),
         cmd: None,
         args: vec![],
@@ -517,7 +579,6 @@ fn resolve_params_errors_when_cmd_missing() {
         log_level: "info".into(),
         tray: false,
         service_name: None,
-        config: None,
         service: None,
         status_file: None,
     };
@@ -530,7 +591,7 @@ fn resolve_params_errors_when_service_missing_in_config() {
     let cfg = Config {
         servers: HashMap::new(),
     };
-    let cli = crate::Cli {
+    let cli = TestCli {
         socket: None,
         cmd: None,
         args: vec![],
@@ -544,7 +605,6 @@ fn resolve_params_errors_when_service_missing_in_config() {
         log_level: "info".into(),
         tray: false,
         service_name: None,
-        config: None,
         service: Some("nosuchservice".into()),
         status_file: None,
     };

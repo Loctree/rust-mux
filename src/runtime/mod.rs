@@ -1,4 +1,7 @@
 //! Runtime module for the mux daemon.
+//!
+//! This module contains the core mux server logic that can be embedded
+//! in other applications via the library interface.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -23,6 +26,7 @@ mod status;
 mod types;
 
 pub use proxy::run_proxy;
+pub use types::MAX_PENDING;
 pub use types::MAX_QUEUE;
 
 use client::handle_client;
@@ -86,7 +90,43 @@ async fn reap_timeouts(
 }
 
 /// Start the mux daemon with resolved parameters.
+///
+/// Creates its own shutdown token that responds to Ctrl+C.
+/// For embedded use with external shutdown control, use [`run_mux_internal`].
 pub async fn run_mux(params: ResolvedParams) -> Result<()> {
+    let shutdown = CancellationToken::new();
+    let shutdown_signal = shutdown.clone();
+    tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        shutdown_signal.cancel();
+    });
+    run_mux_internal(params, shutdown).await
+}
+
+/// Start the mux daemon with external shutdown control.
+///
+/// This variant accepts an external [`CancellationToken`] for programmatic
+/// shutdown, useful when embedding rmcp_mux in larger applications.
+///
+/// # Example
+/// ```rust,no_run
+/// use rmcp_mux::config::ResolvedParams;
+/// use tokio_util::sync::CancellationToken;
+///
+/// async fn run_embedded(params: ResolvedParams) {
+///     let shutdown = CancellationToken::new();
+///     let shutdown_clone = shutdown.clone();
+///
+///     // Trigger shutdown from elsewhere
+///     tokio::spawn(async move {
+///         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+///         shutdown_clone.cancel();
+///     });
+///
+///     rmcp_mux::runtime::run_mux_internal(params, shutdown).await.unwrap();
+/// }
+/// ```
+pub async fn run_mux_internal(params: ResolvedParams, shutdown: CancellationToken) -> Result<()> {
     let service_name = Arc::new(params.service_name.clone());
     let socket_path = params.socket.clone();
     let cmd = params.cmd.clone();
@@ -110,13 +150,6 @@ pub async fn run_mux(params: ResolvedParams) -> Result<()> {
     let listener = UnixListener::bind(&socket_path)
         .with_context(|| format!("failed to bind socket {}", socket_path.display()))?;
     info!("rmcp_mux listening on {}", socket_path.display());
-
-    let shutdown = CancellationToken::new();
-    let shutdown_signal = shutdown.clone();
-    tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
-        shutdown_signal.cancel();
-    });
 
     let state = Arc::new(Mutex::new(MuxState::new(
         max_clients,

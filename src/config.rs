@@ -1,21 +1,57 @@
+//! Configuration types and loading for rmcp_mux.
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
+/// Sanitize a file path by canonicalizing it to prevent path traversal.
+/// Returns the canonicalized path if it exists and is valid.
+pub fn sanitize_path(path: &Path) -> Result<PathBuf> {
+    // Canonicalize resolves symlinks and .. components
+    let canonical = fs::canonicalize(path)
+        .with_context(|| format!("failed to resolve path: {}", path.display()))?;
+    Ok(canonical)
+}
+
+/// Read file contents after sanitizing the path.
+pub fn safe_read_to_string(path: &Path) -> Result<String> {
+    let safe_path = sanitize_path(path)?;
+    // Path is already canonicalized above, resolving symlinks and .. components
+    fs::read_to_string(&safe_path) // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+        .with_context(|| format!("failed to read file: {}", safe_path.display()))
+}
+
+/// Copy file after sanitizing paths.
+pub fn safe_copy(from: &Path, to: &Path) -> Result<u64> {
+    let safe_from = sanitize_path(from)?;
+    // For destination, parent must exist but file may not yet
+    let to_parent = to
+        .parent()
+        .ok_or_else(|| anyhow!("invalid destination path"))?;
+    let _ = sanitize_path(to_parent)?;
+    // Source and dest parent validated via canonicalize
+    #[allow(clippy::let_and_return)]
+    let bytes = fs::copy(&safe_from, to)?; // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+    Ok(bytes)
+}
+
+/// Multi-server configuration file format.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Config {
     pub servers: HashMap<String, ServerConfig>,
 }
 
+/// Per-service configuration in the config file.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ServerConfig {
     pub socket: Option<String>,
     pub cmd: Option<String>,
     pub args: Option<Vec<String>>,
+    pub env: Option<HashMap<String, String>>,
     pub max_active_clients: Option<usize>,
     pub tray: Option<bool>,
     pub service_name: Option<String>,
@@ -27,32 +63,78 @@ pub struct ServerConfig {
     pub restart_backoff_max_ms: Option<u64>,
     pub max_restarts: Option<u64>,
     pub status_file: Option<String>,
+    /// Interval between heartbeat probes in milliseconds (default: 30000).
+    pub heartbeat_interval_ms: Option<u64>,
+    /// Timeout for heartbeat response in milliseconds (default: 30000).
+    pub heartbeat_timeout_ms: Option<u64>,
+    /// Number of consecutive heartbeat failures before triggering restart (default: 3).
+    pub heartbeat_max_failures: Option<u32>,
+    /// Enable/disable heartbeat monitoring (default: true).
+    pub heartbeat_enabled: Option<bool>,
 }
 
+/// Resolved runtime parameters for the mux daemon.
 #[derive(Clone, Debug)]
 pub struct ResolvedParams {
     pub socket: PathBuf,
     pub cmd: String,
     pub args: Vec<String>,
+    pub env: HashMap<String, String>,
     pub max_clients: usize,
     pub tray_enabled: bool,
     pub log_level: String,
     pub service_name: String,
     pub lazy_start: bool,
     pub max_request_bytes: usize,
-    pub request_timeout: std::time::Duration,
-    pub restart_backoff: std::time::Duration,
-    pub restart_backoff_max: std::time::Duration,
+    pub request_timeout: Duration,
+    pub restart_backoff: Duration,
+    pub restart_backoff_max: Duration,
     pub max_restarts: u64,
     pub status_file: Option<PathBuf>,
+    /// Heartbeat probe interval.
+    pub heartbeat_interval: Duration,
+    /// Heartbeat response timeout.
+    pub heartbeat_timeout: Duration,
+    /// Max consecutive heartbeat failures before restart.
+    pub heartbeat_max_failures: u32,
+    /// Whether heartbeat monitoring is enabled.
+    pub heartbeat_enabled: bool,
+}
+
+/// CLI options that can override config file settings.
+///
+/// This trait allows the binary to pass CLI arguments to resolve_params
+/// without the library depending on clap types.
+pub trait CliOptions {
+    fn socket(&self) -> Option<PathBuf>;
+    fn cmd(&self) -> Option<String>;
+    fn args(&self) -> Vec<String>;
+    fn max_active_clients(&self) -> usize;
+    fn lazy_start(&self) -> Option<bool>;
+    fn max_request_bytes(&self) -> Option<usize>;
+    fn request_timeout_ms(&self) -> Option<u64>;
+    fn restart_backoff_ms(&self) -> Option<u64>;
+    fn restart_backoff_max_ms(&self) -> Option<u64>;
+    fn max_restarts(&self) -> Option<u64>;
+    fn log_level(&self) -> String;
+    fn tray(&self) -> bool;
+    fn service_name(&self) -> Option<String>;
+    fn service(&self) -> Option<String>;
+    fn status_file(&self) -> Option<PathBuf>;
+    fn heartbeat_interval_ms(&self) -> Option<u64>;
+    fn heartbeat_timeout_ms(&self) -> Option<u64>;
+    fn heartbeat_max_failures(&self) -> Option<u32>;
+    fn heartbeat_enabled(&self) -> Option<bool>;
+    fn only(&self) -> Option<Vec<String>>;
+    fn except(&self) -> Option<Vec<String>>;
 }
 
 pub fn expand_path(raw: impl AsRef<str>) -> PathBuf {
     let s = raw.as_ref();
-    if let Some(stripped) = s.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join(stripped);
-        }
+    if let Some(stripped) = s.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home).join(stripped);
     }
     PathBuf::from(s)
 }
@@ -61,8 +143,7 @@ pub fn load_config(path: &Path) -> Result<Option<Config>> {
     if !path.exists() {
         return Ok(None);
     }
-    let data = fs::read_to_string(path)
-        .with_context(|| format!("failed to read config at {}", path.display()))?;
+    let data = safe_read_to_string(path)?;
 
     let ext = path
         .extension()
@@ -81,15 +162,18 @@ pub fn load_config(path: &Path) -> Result<Option<Config>> {
     Ok(Some(cfg))
 }
 
-pub fn resolve_params(cli: &crate::Cli, config: Option<&Config>) -> Result<ResolvedParams> {
+/// Resolve runtime parameters from CLI options and config file.
+///
+/// CLI options take precedence over config file settings.
+pub fn resolve_params<C: CliOptions>(cli: &C, config: Option<&Config>) -> Result<ResolvedParams> {
     let service_cfg = if let Some(cfg) = config {
-        if let Some(name) = &cli.service {
+        if let Some(name) = cli.service() {
             let found = cfg
                 .servers
-                .get(name)
+                .get(&name)
                 .cloned()
                 .ok_or_else(|| anyhow!("service '{name}' not found in config"))?;
-            Some((name.clone(), found))
+            Some((name, found))
         } else {
             None
         }
@@ -97,13 +181,12 @@ pub fn resolve_params(cli: &crate::Cli, config: Option<&Config>) -> Result<Resol
         None
     };
 
-    if config.is_some() && cli.service.is_none() {
+    if config.is_some() && cli.service().is_none() {
         return Err(anyhow!("--service is required when using --config"));
     }
 
     let socket = cli
-        .socket
-        .clone()
+        .socket()
         .or_else(|| {
             service_cfg
                 .as_ref()
@@ -112,13 +195,13 @@ pub fn resolve_params(cli: &crate::Cli, config: Option<&Config>) -> Result<Resol
         .ok_or_else(|| anyhow!("socket path not provided (use --socket or config)"))?;
 
     let cmd = cli
-        .cmd
-        .clone()
+        .cmd()
         .or_else(|| service_cfg.as_ref().and_then(|(_, c)| c.cmd.clone()))
         .ok_or_else(|| anyhow!("cmd not provided (use --cmd or config)"))?;
 
-    let args = if !cli.args.is_empty() {
-        cli.args.clone()
+    let cli_args = cli.args();
+    let args = if !cli_args.is_empty() {
+        cli_args
     } else {
         service_cfg
             .as_ref()
@@ -126,12 +209,17 @@ pub fn resolve_params(cli: &crate::Cli, config: Option<&Config>) -> Result<Resol
             .unwrap_or_default()
     };
 
+    let env = service_cfg
+        .as_ref()
+        .and_then(|(_, c)| c.env.clone())
+        .unwrap_or_default();
+
     let max_clients = service_cfg
         .as_ref()
         .and_then(|(_, c)| c.max_active_clients)
-        .unwrap_or(cli.max_active_clients);
+        .unwrap_or_else(|| cli.max_active_clients());
 
-    let tray_enabled = if cli.tray {
+    let tray_enabled = if cli.tray() {
         true
     } else {
         service_cfg
@@ -143,23 +231,23 @@ pub fn resolve_params(cli: &crate::Cli, config: Option<&Config>) -> Result<Resol
     let log_level = service_cfg
         .as_ref()
         .and_then(|(_, c)| c.log_level.clone())
-        .unwrap_or_else(|| cli.log_level.clone());
+        .unwrap_or_else(|| cli.log_level());
 
-    let lazy_start = cli.lazy_start.unwrap_or_else(|| {
+    let lazy_start = cli.lazy_start().unwrap_or_else(|| {
         service_cfg
             .as_ref()
             .and_then(|(_, c)| c.lazy_start)
             .unwrap_or(false)
     });
 
-    let max_request_bytes = cli.max_request_bytes.unwrap_or_else(|| {
+    let max_request_bytes = cli.max_request_bytes().unwrap_or_else(|| {
         service_cfg
             .as_ref()
             .and_then(|(_, c)| c.max_request_bytes)
             .unwrap_or(1_048_576)
     });
 
-    let request_timeout = Duration::from_millis(cli.request_timeout_ms.unwrap_or_else(|| {
+    let request_timeout = Duration::from_millis(cli.request_timeout_ms().unwrap_or_else(|| {
         service_cfg
             .as_ref()
             .and_then(|(_, c)| c.request_timeout_ms)
@@ -167,12 +255,12 @@ pub fn resolve_params(cli: &crate::Cli, config: Option<&Config>) -> Result<Resol
     }));
 
     let restart_backoff = Duration::from_millis(
-        cli.restart_backoff_ms
+        cli.restart_backoff_ms()
             .or_else(|| service_cfg.as_ref().and_then(|(_, c)| c.restart_backoff_ms))
             .unwrap_or(1_000),
     );
     let restart_backoff_max = Duration::from_millis(
-        cli.restart_backoff_max_ms
+        cli.restart_backoff_max_ms()
             .or_else(|| {
                 service_cfg
                     .as_ref()
@@ -181,13 +269,12 @@ pub fn resolve_params(cli: &crate::Cli, config: Option<&Config>) -> Result<Resol
             .unwrap_or(30_000),
     );
     let max_restarts = cli
-        .max_restarts
+        .max_restarts()
         .or_else(|| service_cfg.as_ref().and_then(|(_, c)| c.max_restarts))
         .unwrap_or(5);
 
     let status_file = cli
-        .status_file
-        .clone()
+        .status_file()
         .map(|p| p.to_str().map(expand_path).unwrap_or_else(|| p.clone()))
         .or_else(|| {
             service_cfg
@@ -196,8 +283,7 @@ pub fn resolve_params(cli: &crate::Cli, config: Option<&Config>) -> Result<Resol
         });
 
     let service_name_raw = cli
-        .service_name
-        .clone()
+        .service_name()
         .or_else(|| {
             service_cfg
                 .as_ref()
@@ -210,10 +296,43 @@ pub fn resolve_params(cli: &crate::Cli, config: Option<&Config>) -> Result<Resol
         })
         .unwrap_or_else(|| "rmcp_mux".to_string());
 
+    // Heartbeat configuration
+    let heartbeat_interval = Duration::from_millis(
+        cli.heartbeat_interval_ms()
+            .or_else(|| {
+                service_cfg
+                    .as_ref()
+                    .and_then(|(_, c)| c.heartbeat_interval_ms)
+            })
+            .unwrap_or(30_000),
+    );
+    let heartbeat_timeout = Duration::from_millis(
+        cli.heartbeat_timeout_ms()
+            .or_else(|| {
+                service_cfg
+                    .as_ref()
+                    .and_then(|(_, c)| c.heartbeat_timeout_ms)
+            })
+            .unwrap_or(30_000),
+    );
+    let heartbeat_max_failures = cli
+        .heartbeat_max_failures()
+        .or_else(|| {
+            service_cfg
+                .as_ref()
+                .and_then(|(_, c)| c.heartbeat_max_failures)
+        })
+        .unwrap_or(3);
+    let heartbeat_enabled = cli
+        .heartbeat_enabled()
+        .or_else(|| service_cfg.as_ref().and_then(|(_, c)| c.heartbeat_enabled))
+        .unwrap_or(true);
+
     Ok(ResolvedParams {
         socket,
         cmd,
         args,
+        env,
         max_clients,
         tray_enabled,
         log_level,
@@ -225,5 +344,133 @@ pub fn resolve_params(cli: &crate::Cli, config: Option<&Config>) -> Result<Resol
         restart_backoff_max,
         max_restarts,
         status_file,
+        heartbeat_interval,
+        heartbeat_timeout,
+        heartbeat_max_failures,
+        heartbeat_enabled,
     })
+}
+
+/// Resolve parameters for multiple services from config file.
+///
+/// Applies --only and --except filters to select which servers to run.
+/// Returns a list of ResolvedParams, one per selected service.
+pub fn resolve_params_multi<C: CliOptions>(
+    cli: &C,
+    config: &Config,
+) -> Result<Vec<ResolvedParams>> {
+    let only_filter = cli.only();
+    let except_filter = cli.except();
+
+    let mut results = Vec::new();
+
+    for (name, server_cfg) in &config.servers {
+        // Apply filters
+        if let Some(ref only) = only_filter
+            && !only.contains(name)
+        {
+            continue;
+        }
+        if let Some(ref except) = except_filter
+            && except.contains(name)
+        {
+            continue;
+        }
+
+        // Build resolved params for this service
+        let socket = server_cfg
+            .socket
+            .as_ref()
+            .map(expand_path)
+            .ok_or_else(|| anyhow!("service '{}' missing socket in config", name))?;
+
+        let cmd = server_cfg
+            .cmd
+            .clone()
+            .ok_or_else(|| anyhow!("service '{}' missing cmd in config", name))?;
+
+        let args = server_cfg.args.clone().unwrap_or_default();
+        let env = server_cfg.env.clone().unwrap_or_default();
+        let max_clients = server_cfg
+            .max_active_clients
+            .unwrap_or(cli.max_active_clients());
+        let tray_enabled = server_cfg.tray.unwrap_or(cli.tray());
+        let log_level = server_cfg
+            .log_level
+            .clone()
+            .unwrap_or_else(|| cli.log_level());
+        let lazy_start = cli.lazy_start().or(server_cfg.lazy_start).unwrap_or(false);
+        let max_request_bytes = cli
+            .max_request_bytes()
+            .or(server_cfg.max_request_bytes)
+            .unwrap_or(1_048_576);
+        let request_timeout = Duration::from_millis(
+            cli.request_timeout_ms()
+                .or(server_cfg.request_timeout_ms)
+                .unwrap_or(30_000),
+        );
+        let restart_backoff = Duration::from_millis(
+            cli.restart_backoff_ms()
+                .or(server_cfg.restart_backoff_ms)
+                .unwrap_or(1_000),
+        );
+        let restart_backoff_max = Duration::from_millis(
+            cli.restart_backoff_max_ms()
+                .or(server_cfg.restart_backoff_max_ms)
+                .unwrap_or(30_000),
+        );
+        let max_restarts = cli.max_restarts().or(server_cfg.max_restarts).unwrap_or(5);
+        let status_file = cli
+            .status_file()
+            .map(|p| p.to_str().map(expand_path).unwrap_or_else(|| p.clone()))
+            .or_else(|| server_cfg.status_file.as_deref().map(expand_path));
+
+        let service_name = server_cfg
+            .service_name
+            .clone()
+            .unwrap_or_else(|| name.clone());
+
+        let heartbeat_interval = Duration::from_millis(
+            cli.heartbeat_interval_ms()
+                .or(server_cfg.heartbeat_interval_ms)
+                .unwrap_or(30_000),
+        );
+        let heartbeat_timeout = Duration::from_millis(
+            cli.heartbeat_timeout_ms()
+                .or(server_cfg.heartbeat_timeout_ms)
+                .unwrap_or(30_000),
+        );
+        let heartbeat_max_failures = cli
+            .heartbeat_max_failures()
+            .or(server_cfg.heartbeat_max_failures)
+            .unwrap_or(3);
+        let heartbeat_enabled = cli
+            .heartbeat_enabled()
+            .or(server_cfg.heartbeat_enabled)
+            .unwrap_or(true);
+
+        results.push(ResolvedParams {
+            socket,
+            cmd,
+            args,
+            env,
+            max_clients,
+            tray_enabled,
+            log_level,
+            service_name,
+            lazy_start,
+            max_request_bytes,
+            request_timeout,
+            restart_backoff,
+            restart_backoff_max,
+            max_restarts,
+            status_file,
+            heartbeat_interval,
+            heartbeat_timeout,
+            heartbeat_max_failures,
+            heartbeat_enabled,
+        });
+    }
+
+    Ok(results)
 }

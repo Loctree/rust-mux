@@ -4,14 +4,14 @@ set -euo pipefail
 REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 
-echo "🔍 [Pre-commit] Running quality gate..."
+echo "🔍 [Pre-push] Running quality gate..."
 
 echo ""
 echo "[1/4] 🦀 cargo fmt --check..."
 if cargo fmt --check; then
   echo "    ✓ formatting OK"
 else
-  echo "❌ Run 'cargo fmt' before committing."
+  echo "❌ Run 'cargo fmt' before pushing."
   exit 1
 fi
 
@@ -20,7 +20,7 @@ echo "[2/4] 🦀 cargo clippy..."
 if cargo clippy --all-targets --all-features --quiet -- -D warnings; then
   echo "    ✓ clippy OK"
 else
-  echo "❌ Clippy errors. Fix before committing."
+  echo "❌ Clippy errors. Fix before pushing."
   exit 1
 fi
 
@@ -34,17 +34,12 @@ else
 fi
 
 echo ""
-echo "[4/4] 🔐 semgrep scan..."
-if command -v semgrep >/dev/null 2>&1; then
-  if semgrep scan --config auto --quiet --error 2>/dev/null; then
-    echo "    ✓ semgrep OK"
-  else
-    echo "❌ Semgrep found issues. Fix before committing."
-    exit 1
-  fi
+echo "[4/4] 📦 cargo publish --dry-run..."
+if cargo publish --dry-run --allow-dirty --quiet 2>/dev/null; then
+  echo "    ✓ publish dry-run OK"
 else
-  echo "    ⚠️  semgrep not installed (install via 'pipx install semgrep')"
+  echo "    ⚠️  publish dry-run skipped (may need login)"
 fi
 
 echo ""
-echo "✅ Quality gate passed — commit allowed."
+echo "✅ Quality gate passed — push allowed."

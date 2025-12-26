@@ -1,0 +1,358 @@
+//! Status file writing and daemon status socket.
+//!
+//! Provides:
+//! - File-based status snapshots for single servers
+//! - Unix socket endpoint for querying all managed servers
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Instant;
+
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use tokio::fs;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::{Mutex, Semaphore, watch};
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, warn};
+
+use crate::multi::{MultiServerStatus, StatusLevel, format_uptime};
+use crate::state::{MuxState, ServerStatus, StatusSnapshot};
+
+/// Write a status snapshot to a file atomically.
+pub async fn write_status_file(path: &Path, snapshot: &StatusSnapshot) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("failed to create status dir {}", parent.display()))?;
+    }
+    let tmp = path.with_extension("tmp");
+    let data = serde_json::to_vec_pretty(snapshot)?;
+    fs::write(&tmp, data)
+        .await
+        .with_context(|| format!("failed to write status tmp {}", tmp.display()))?;
+    fs::rename(&tmp, path)
+        .await
+        .with_context(|| format!("failed to atomically replace status {}", path.display()))?;
+    Ok(())
+}
+
+/// Spawn a background task that writes status snapshots to a file whenever they change.
+pub fn spawn_status_writer(
+    mut rx: watch::Receiver<StatusSnapshot>,
+    path: PathBuf,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        // write initial snapshot
+        let mut current = rx.borrow().clone();
+        if let Err(e) = write_status_file(&path, &current).await {
+            warn!("failed to write initial status file: {e}");
+        }
+        while rx.changed().await.is_ok() {
+            current = rx.borrow().clone();
+            if let Err(e) = write_status_file(&path, &current).await {
+                warn!("failed to write status file: {e}");
+            }
+        }
+    })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Daemon status socket
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Default status socket path.
+pub const DEFAULT_STATUS_SOCKET: &str = "/tmp/rmcp-mux.status.sock";
+
+/// Response from the status endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemonStatus {
+    /// Daemon version
+    pub version: String,
+    /// Total uptime in milliseconds
+    pub uptime_ms: u64,
+    /// Formatted uptime string
+    pub uptime: String,
+    /// Number of configured servers
+    pub server_count: usize,
+    /// Number of servers currently running
+    pub running_count: usize,
+    /// Number of servers with errors
+    pub error_count: usize,
+    /// Per-server status
+    pub servers: Vec<MultiServerStatus>,
+}
+
+/// Managed server reference for status collection.
+pub struct ServerRef {
+    pub name: String,
+    pub state: Arc<Mutex<MuxState>>,
+    pub active_clients: Arc<Semaphore>,
+    pub max_active_clients: usize,
+}
+
+/// Shared state for status collection.
+pub struct StatusState {
+    pub servers: HashMap<String, ServerRef>,
+    pub start_time: Instant,
+}
+
+impl StatusState {
+    pub fn new() -> Self {
+        Self {
+            servers: HashMap::new(),
+            start_time: Instant::now(),
+        }
+    }
+
+    pub fn register_server(&mut self, server_ref: ServerRef) {
+        self.servers.insert(server_ref.name.clone(), server_ref);
+    }
+
+    /// Collect status from all servers.
+    pub async fn collect_status(&self) -> DaemonStatus {
+        let mut servers = Vec::with_capacity(self.servers.len());
+        let mut running_count = 0;
+        let mut error_count = 0;
+
+        for (name, server_ref) in &self.servers {
+            let st = server_ref.state.lock().await;
+            let active = server_ref
+                .max_active_clients
+                .saturating_sub(server_ref.active_clients.available_permits());
+
+            let (level, status_text) = match &st.server_status {
+                ServerStatus::Running => {
+                    running_count += 1;
+                    if st.heartbeat_metrics.consecutive_failures > 0 {
+                        (StatusLevel::Warn, "Running (heartbeat issues)".to_string())
+                    } else {
+                        (StatusLevel::Ok, "Running".to_string())
+                    }
+                }
+                ServerStatus::Starting => {
+                    running_count += 1;
+                    (StatusLevel::Ok, "Starting".to_string())
+                }
+                ServerStatus::Restarting => {
+                    running_count += 1;
+                    (StatusLevel::Warn, "Restarting".to_string())
+                }
+                ServerStatus::Failed(reason) => {
+                    error_count += 1;
+                    (StatusLevel::Error, format!("Failed: {}", reason))
+                }
+                ServerStatus::Stopped => (StatusLevel::Lazy, "Stopped".to_string()),
+                ServerStatus::Lazy => (StatusLevel::Lazy, "Lazy (not started)".to_string()),
+                ServerStatus::Backoff => {
+                    error_count += 1;
+                    (StatusLevel::Error, "Backoff (restarting)".to_string())
+                }
+            };
+
+            let uptime_ms = st
+                .started_at
+                .map(|t| t.elapsed().as_millis() as u64)
+                .unwrap_or(0);
+
+            servers.push(MultiServerStatus {
+                name: name.clone(),
+                level,
+                status_text,
+                connected_clients: st.clients.len(),
+                active_clients: active,
+                max_active_clients: server_ref.max_active_clients,
+                pending_requests: st.pending.len(),
+                restarts: st.restarts,
+                uptime_ms,
+                in_backoff: st.in_backoff,
+                heartbeat_latency_ms: st.heartbeat_metrics.avg_response_ms,
+            });
+        }
+
+        // Sort servers by name for consistent output
+        servers.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let uptime_ms = self.start_time.elapsed().as_millis() as u64;
+
+        DaemonStatus {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            uptime_ms,
+            uptime: format_uptime(uptime_ms),
+            server_count: self.servers.len(),
+            running_count,
+            error_count,
+            servers,
+        }
+    }
+}
+
+impl Default for StatusState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Run the status socket listener.
+///
+/// Listens on the specified Unix socket and responds to status queries.
+/// Each connection receives a JSON response with the current daemon status.
+pub async fn run_status_listener(
+    socket_path: impl AsRef<Path>,
+    state: Arc<Mutex<StatusState>>,
+    shutdown: CancellationToken,
+) -> Result<()> {
+    let socket_path = socket_path.as_ref();
+
+    // Clean up stale socket
+    if socket_path.exists() {
+        std::fs::remove_file(socket_path)?;
+    }
+
+    let listener = UnixListener::bind(socket_path)?;
+    info!(socket = %socket_path.display(), "status listener started");
+
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => {
+                debug!("status listener shutting down");
+                break;
+            }
+            accept = listener.accept() => {
+                match accept {
+                    Ok((stream, _)) => {
+                        let state = Arc::clone(&state);
+                        tokio::spawn(async move {
+                            if let Err(e) = handle_status_connection(stream, state).await {
+                                warn!(error = %e, "status connection error");
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!(error = %e, "status accept error");
+                    }
+                }
+            }
+        }
+    }
+
+    // Clean up socket
+    let _ = std::fs::remove_file(socket_path);
+    Ok(())
+}
+
+/// Handle a single status connection.
+async fn handle_status_connection(
+    mut stream: UnixStream,
+    state: Arc<Mutex<StatusState>>,
+) -> Result<()> {
+    // Collect status
+    let status = {
+        let st = state.lock().await;
+        st.collect_status().await
+    };
+
+    // Serialize and send
+    let json = serde_json::to_string(&status)?;
+    stream.write_all(json.as_bytes()).await?;
+    stream.write_all(b"\n").await?;
+    stream.shutdown().await?;
+
+    Ok(())
+}
+
+/// Query the daemon status via the status socket.
+pub async fn query_status(socket_path: impl AsRef<Path>) -> Result<DaemonStatus> {
+    let stream = UnixStream::connect(socket_path.as_ref()).await?;
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line).await?;
+    let status: DaemonStatus = serde_json::from_str(&line)?;
+    Ok(status)
+}
+
+/// Print status in a formatted table.
+pub fn print_status_table(status: &DaemonStatus) {
+    println!("rmcp-mux v{} | uptime: {}", status.version, status.uptime);
+    println!("{:─<72}", "");
+    println!(
+        "{:<20} {:^8} {:>8} {:>8} {:>10} {:>10}",
+        "Server", "State", "Clients", "Pending", "Restarts", "Heartbeat"
+    );
+    println!("{:─<72}", "");
+
+    for server in &status.servers {
+        let state_icon = match server.level {
+            StatusLevel::Ok => "✓",
+            StatusLevel::Warn => "⚠",
+            StatusLevel::Error => "✗",
+            StatusLevel::Lazy => "○",
+        };
+
+        let clients = format!("{}/{}", server.active_clients, server.max_active_clients);
+        let heartbeat = server
+            .heartbeat_latency_ms
+            .map(|ms| format!("{}ms", ms))
+            .unwrap_or_else(|| "-".to_string());
+
+        println!(
+            "{:<20} {:^8} {:>8} {:>8} {:>10} {:>10}",
+            server.name,
+            format!("{} {}", state_icon, short_status(&server.status_text)),
+            clients,
+            server.pending_requests,
+            server.restarts,
+            heartbeat,
+        );
+    }
+
+    println!("{:─<72}", "");
+    println!(
+        "Total: {} servers ({} running, {} errors)",
+        status.server_count, status.running_count, status.error_count
+    );
+}
+
+/// Shorten status text for table display.
+fn short_status(status: &str) -> &str {
+    if status.starts_with("Running") {
+        "UP"
+    } else if status.starts_with("Starting") {
+        "START"
+    } else if status.starts_with("Lazy") {
+        "LAZY"
+    } else if status.starts_with("Failed") {
+        "FAIL"
+    } else if status.starts_with("Backoff") {
+        "BACK"
+    } else if status.starts_with("Restarting") {
+        "RSTRT"
+    } else if status.starts_with("Stopped") {
+        "STOP"
+    } else {
+        status
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_status_mapping() {
+        assert_eq!(short_status("Running"), "UP");
+        assert_eq!(short_status("Running (heartbeat issues)"), "UP");
+        assert_eq!(short_status("Lazy (not started)"), "LAZY");
+        assert_eq!(short_status("Failed: timeout"), "FAIL");
+    }
+
+    #[tokio::test]
+    async fn status_state_collects_empty() {
+        let state = StatusState::new();
+        let status = state.collect_status().await;
+        assert_eq!(status.server_count, 0);
+        assert_eq!(status.running_count, 0);
+    }
+}

@@ -2,11 +2,14 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::Args;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{expand_path, Config, ServerConfig};
+use crate::config::{Config, ServerConfig, expand_path, safe_copy, safe_read_to_string};
+
+// Re-export shared types
+pub use crate::common::{HostFormat, HostKind};
 
 #[derive(Args, Debug, Clone)]
 pub struct ScanArgs {
@@ -63,35 +66,6 @@ pub struct StatusArgs {
     /// Expected proxy command (default rmcp_mux_proxy).
     #[arg(long, default_value = "rmcp_mux_proxy")]
     pub proxy_cmd: String,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
-pub enum HostKind {
-    Codex,
-    Cursor,
-    VSCode,
-    Claude,
-    JetBrains,
-    Unknown,
-}
-
-impl HostKind {
-    pub fn as_label(&self) -> &'static str {
-        match self {
-            HostKind::Codex => "codex",
-            HostKind::Cursor => "cursor",
-            HostKind::VSCode => "vscode",
-            HostKind::Claude => "claude",
-            HostKind::JetBrains => "jetbrains",
-            HostKind::Unknown => "unknown",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub enum HostFormat {
-    Toml,
-    Json,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -206,8 +180,7 @@ pub fn format_for_host(host: &HostFile) -> &'static str {
 }
 
 pub fn scan_host_file(file: &HostFile) -> Result<ScanResult> {
-    let data = fs::read_to_string(&file.path)
-        .with_context(|| format!("failed to read {}", file.path.display()))?;
+    let data = safe_read_to_string(&file.path)?;
     let raw: RawHostConfig = match file.format {
         HostFormat::Toml => toml::from_str(&data)
             .with_context(|| format!("failed to parse toml {}", file.path.display()))?,
@@ -254,6 +227,7 @@ pub fn build_manifest(scans: &[ScanResult], socket_dir: &Path) -> Config {
                     socket: Some(socket),
                     cmd: Some(svc.command.clone()),
                     args: Some(svc.args.clone()),
+                    env: None,
                     max_active_clients: Some(5),
                     tray: Some(false),
                     service_name: Some(svc.name.clone()),
@@ -265,6 +239,10 @@ pub fn build_manifest(scans: &[ScanResult], socket_dir: &Path) -> Config {
                     restart_backoff_max_ms: Some(30_000),
                     max_restarts: Some(5),
                     status_file: None,
+                    heartbeat_interval_ms: Some(30_000),
+                    heartbeat_timeout_ms: Some(30_000),
+                    heartbeat_max_failures: Some(3),
+                    heartbeat_enabled: Some(true),
                 },
             );
         }
@@ -320,10 +298,7 @@ pub fn generate_snippet(
             "mcpServers".to_string(),
             serde_json::Value::Object(servers.clone()),
         );
-        snippets.insert(
-            scan.host.kind.clone(),
-            serde_json::Value::Object(root.clone()),
-        );
+        snippets.insert(scan.host.kind, serde_json::Value::Object(root.clone()));
     }
 
     snippets
@@ -343,8 +318,7 @@ pub fn rewire_host(
         .ok_or_else(|| anyhow!("no snippet generated for host"))?;
     let format = format_for_host(host);
     let snippet_text = serialize_snippet(snippet, format)?;
-    let data = fs::read_to_string(&host.path)
-        .with_context(|| format!("failed to read {}", host.path.display()))?;
+    let data = safe_read_to_string(&host.path)?;
 
     let merged = match host.format {
         HostFormat::Json => {
@@ -398,8 +372,7 @@ pub fn write_with_backup(path: &Path, contents: &str, dry_run: bool) -> Result<O
     }
     let backup = path.with_extension("bak");
     if path.exists() {
-        fs::copy(path, &backup)
-            .with_context(|| format!("failed to create backup {}", backup.display()))?;
+        safe_copy(path, &backup)?;
     }
     fs::write(path, contents).with_context(|| format!("failed to write {}", path.display()))?;
     Ok(Some(backup))
@@ -654,11 +627,12 @@ mod tests {
             svc.args.as_ref().expect("args"),
             &vec!["@mcp/server-memory"]
         );
-        assert!(svc
-            .socket
-            .as_ref()
-            .expect("socket")
-            .contains("/tmp/sockets/memory.sock"));
+        assert!(
+            svc.socket
+                .as_ref()
+                .expect("socket")
+                .contains("/tmp/sockets/memory.sock")
+        );
     }
 
     #[test]

@@ -18,10 +18,33 @@ use crate::multi::StatusLevel;
 use crate::runtime::{DaemonStatus, DEFAULT_STATUS_SOCKET, query_status};
 use crate::tray::LoadedIcon;
 
-/// Spawn the multi-server tray dashboard.
+/// Run the tray dashboard on the current thread (required for macOS main thread).
 ///
 /// This creates a system tray icon that shows status of all managed servers.
 /// It queries the daemon status socket periodically and updates the menu.
+/// Must be called from the main thread on macOS.
+pub fn run_tray_dashboard(
+    shutdown: CancellationToken,
+    icon: Option<LoadedIcon>,
+    status_socket: Option<PathBuf>,
+) {
+    let socket = status_socket.unwrap_or_else(|| PathBuf::from(DEFAULT_STATUS_SOCKET));
+
+    // Create a tokio runtime for async status queries
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("failed to create tokio runtime");
+
+    rt.block_on(async move {
+        tray_dashboard_loop(socket, shutdown, icon).await;
+    });
+}
+
+/// Spawn the multi-server tray dashboard in a background thread.
+///
+/// Note: On macOS, tray menus must be created on the main thread.
+/// Use `run_tray_dashboard` instead for standalone dashboard commands.
 pub fn spawn_tray_dashboard(
     shutdown: CancellationToken,
     icon: Option<LoadedIcon>,

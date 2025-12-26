@@ -15,7 +15,7 @@ use tray_icon::{
 };
 
 use crate::multi::StatusLevel;
-use crate::runtime::{DaemonStatus, DEFAULT_STATUS_SOCKET, query_status};
+use crate::runtime::{DEFAULT_STATUS_SOCKET, DaemonStatus, query_status};
 use crate::tray::LoadedIcon;
 
 /// Run the tray dashboard on the current thread (required for macOS main thread).
@@ -101,13 +101,19 @@ impl DashboardUi {
             if let Some(items) = self.servers.get(i) {
                 let icon = status_icon(server.level);
                 items.submenu.set_text(format!("{} {}", icon, server.name));
-                items.status.set_text(format!("  Status: {}", server.status_text));
+                items
+                    .status
+                    .set_text(format!("  Status: {}", server.status_text));
                 items.clients.set_text(format!(
                     "  Clients: {}/{}",
                     server.active_clients, server.max_active_clients
                 ));
-                items.pending.set_text(format!("  Pending: {}", server.pending_requests));
-                items.restarts.set_text(format!("  Restarts: {}", server.restarts));
+                items
+                    .pending
+                    .set_text(format!("  Pending: {}", server.pending_requests));
+                items
+                    .restarts
+                    .set_text(format!("  Restarts: {}", server.restarts));
                 items.heartbeat.set_text(format!(
                     "  Heartbeat: {}",
                     server
@@ -218,11 +224,18 @@ fn build_dashboard(status: &DaemonStatus, icon_data: Option<&LoadedIcon>) -> Res
 
         let status_item = MenuItem::new(format!("  Status: {}", server.status_text), false, None);
         let clients_item = MenuItem::new(
-            format!("  Clients: {}/{}", server.active_clients, server.max_active_clients),
+            format!(
+                "  Clients: {}/{}",
+                server.active_clients, server.max_active_clients
+            ),
             false,
             None,
         );
-        let pending_item = MenuItem::new(format!("  Pending: {}", server.pending_requests), false, None);
+        let pending_item = MenuItem::new(
+            format!("  Pending: {}", server.pending_requests),
+            false,
+            None,
+        );
         let restarts_item = MenuItem::new(format!("  Restarts: {}", server.restarts), false, None);
         let heartbeat_item = MenuItem::new(
             format!(

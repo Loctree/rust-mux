@@ -4,24 +4,24 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
+use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 use image::ImageFormat;
 use tokio_util::sync::CancellationToken;
 use tray_icon::{
-    Icon, TrayIconBuilder,
     menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
+    Icon, TrayIconBuilder,
 };
 
 use crate::state::{ServerStatus, StatusSnapshot};
 
 #[derive(Clone, Debug)]
-pub(crate) struct LoadedIcon {
+pub struct LoadedIcon {
     pub data: Vec<u8>,
     pub width: u32,
     pub height: u32,
 }
 
-pub(crate) fn spawn_tray(
+pub fn spawn_tray(
     status_rx: tokio::sync::watch::Receiver<StatusSnapshot>,
     shutdown: CancellationToken,
     icon: Option<LoadedIcon>,
@@ -62,7 +62,7 @@ fn send_latest(tx: &Sender<StatusSnapshot>, snap: StatusSnapshot) {
     }
 }
 
-struct TrayUi {
+pub struct TrayUi {
     _tray: tray_icon::TrayIcon,
     header: MenuItem,
     status: MenuItem,
@@ -158,7 +158,7 @@ fn build_tray(snapshot: &StatusSnapshot, icon_data: Option<&LoadedIcon>) -> Resu
         default_icon()
     };
     let tray = TrayIconBuilder::new()
-        .with_tooltip(format!("rmcp_mux – {}", snapshot.service_name))
+        .with_tooltip(format!("rust-mux – {}", snapshot.service_name))
         .with_icon(icon)
         .with_menu(Box::new(menu.clone()))
         .build()?;
@@ -181,8 +181,6 @@ fn status_line(snapshot: &StatusSnapshot) -> String {
         ServerStatus::Running => "Running".to_string(),
         ServerStatus::Restarting => "Restarting".to_string(),
         ServerStatus::Stopped => "Stopped".to_string(),
-        ServerStatus::Lazy => "Lazy (waiting)".to_string(),
-        ServerStatus::Backoff => "Backoff".to_string(),
         ServerStatus::Failed(reason) => format!("Failed: {reason}"),
     };
     format!("Status: {status_text}")
@@ -232,13 +230,13 @@ fn default_icon() -> Icon {
     Icon::from_rgba(data, w as u32, h as u32).expect("valid icon")
 }
 
-pub(crate) fn find_tray_icon() -> Option<LoadedIcon> {
+pub fn find_tray_icon() -> Option<LoadedIcon> {
     let candidates = [
-        PathBuf::from("public/rmcp_mux_icon.png"),
+        PathBuf::from("public/rust_mux_icon.png"),
         std::env::current_exe()
             .ok()
-            .and_then(|p| p.parent().map(|d| d.join("public/rmcp_mux_icon.png")))
-            .unwrap_or_else(|| PathBuf::from("public/rmcp_mux_icon.png")),
+            .and_then(|p| p.parent().map(|d| d.join("public/rust_mux_icon.png")))
+            .unwrap_or_else(|| PathBuf::from("public/rust_mux_icon.png")),
     ];
 
     for path in candidates {
@@ -249,7 +247,7 @@ pub(crate) fn find_tray_icon() -> Option<LoadedIcon> {
     None
 }
 
-pub(crate) fn load_icon_from_file(path: &Path) -> Option<LoadedIcon> {
+pub fn load_icon_from_file(path: &Path) -> Option<LoadedIcon> {
     let data = std::fs::read(path).ok()?;
     let img = image::load_from_memory_with_format(&data, ImageFormat::Png).ok()?;
     let rgba = img.to_rgba8();
@@ -293,7 +291,6 @@ mod tests {
         let base = StatusSnapshot {
             service_name: "s".into(),
             server_status: ServerStatus::Starting,
-            health_status: crate::state::HealthStatus::Starting,
             restarts: 0,
             connected_clients: 1,
             active_clients: 1,
@@ -308,10 +305,6 @@ mod tests {
             restart_backoff_ms: 1_000,
             restart_backoff_max_ms: 30_000,
             max_restarts: 5,
-            heartbeat: crate::state::HeartbeatMetrics::default(),
-            uptime_ms: 0,
-            in_backoff: false,
-            heartbeat_latency_ms: None,
         };
         assert!(status_line(&base).contains("Starting"));
         assert!(client_line(&base).contains("active 1/3"));

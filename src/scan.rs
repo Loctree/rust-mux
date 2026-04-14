@@ -2,14 +2,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use clap::Args;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Config, ServerConfig, expand_path, safe_copy, safe_read_to_string};
-
-// Re-export shared types
-pub use crate::common::{HostFormat, HostKind};
+use crate::config::{expand_path, Config, ServerConfig};
 
 #[derive(Args, Debug, Clone)]
 pub struct ScanArgs {
@@ -26,7 +23,7 @@ pub struct ScanArgs {
     #[arg(long, default_value = "toml")]
     pub snippet_format: String,
     /// Socket directory for generated services.
-    #[arg(long, default_value = "~/.rmcp_servers/rmcp_mux/sockets")]
+    #[arg(long, default_value = "~/.rmcp_servers/rust_mux/sockets")]
     pub socket_dir: String,
     /// Do not write files; print to stdout.
     #[arg(long, default_value_t = false)]
@@ -42,10 +39,10 @@ pub struct RewireArgs {
     #[arg(long)]
     pub host: Option<String>,
     /// Socket directory used for proxy args.
-    #[arg(long, default_value = "~/.rmcp_servers/rmcp_mux/sockets")]
+    #[arg(long, default_value = "~/.rmcp_servers/rust_mux/sockets")]
     pub socket_dir: String,
     /// Proxy command used in rewritten config.
-    #[arg(long, default_value = "rmcp_mux_proxy")]
+    #[arg(long, default_value = "rust-mux-proxy")]
     pub proxy_cmd: String,
     /// Extra args passed before --socket.
     #[arg(long, value_delimiter = ' ')]
@@ -63,9 +60,38 @@ pub struct StatusArgs {
     /// Host kind (codex|cursor|vscode|claude|jetbrains).
     #[arg(long)]
     pub host: Option<String>,
-    /// Expected proxy command (default rmcp_mux_proxy).
-    #[arg(long, default_value = "rmcp_mux_proxy")]
+    /// Expected proxy command (default rust-mux-proxy).
+    #[arg(long, default_value = "rust-mux-proxy")]
     pub proxy_cmd: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
+pub enum HostKind {
+    Codex,
+    Cursor,
+    VSCode,
+    Claude,
+    JetBrains,
+    Unknown,
+}
+
+impl HostKind {
+    pub fn as_label(&self) -> &'static str {
+        match self {
+            HostKind::Codex => "codex",
+            HostKind::Cursor => "cursor",
+            HostKind::VSCode => "vscode",
+            HostKind::Claude => "claude",
+            HostKind::JetBrains => "jetbrains",
+            HostKind::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub enum HostFormat {
+    Toml,
+    Json,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -180,7 +206,8 @@ pub fn format_for_host(host: &HostFile) -> &'static str {
 }
 
 pub fn scan_host_file(file: &HostFile) -> Result<ScanResult> {
-    let data = safe_read_to_string(&file.path)?;
+    let data = fs::read_to_string(&file.path)
+        .with_context(|| format!("failed to read {}", file.path.display()))?;
     let raw: RawHostConfig = match file.format {
         HostFormat::Toml => toml::from_str(&data)
             .with_context(|| format!("failed to parse toml {}", file.path.display()))?,
@@ -227,7 +254,6 @@ pub fn build_manifest(scans: &[ScanResult], socket_dir: &Path) -> Config {
                     socket: Some(socket),
                     cmd: Some(svc.command.clone()),
                     args: Some(svc.args.clone()),
-                    env: None,
                     max_active_clients: Some(5),
                     tray: Some(false),
                     service_name: Some(svc.name.clone()),
@@ -239,10 +265,6 @@ pub fn build_manifest(scans: &[ScanResult], socket_dir: &Path) -> Config {
                     restart_backoff_max_ms: Some(30_000),
                     max_restarts: Some(5),
                     status_file: None,
-                    heartbeat_interval_ms: Some(30_000),
-                    heartbeat_timeout_ms: Some(30_000),
-                    heartbeat_max_failures: Some(3),
-                    heartbeat_enabled: Some(true),
                 },
             );
         }
@@ -298,7 +320,10 @@ pub fn generate_snippet(
             "mcpServers".to_string(),
             serde_json::Value::Object(servers.clone()),
         );
-        snippets.insert(scan.host.kind, serde_json::Value::Object(root.clone()));
+        snippets.insert(
+            scan.host.kind.clone(),
+            serde_json::Value::Object(root.clone()),
+        );
     }
 
     snippets
@@ -318,7 +343,8 @@ pub fn rewire_host(
         .ok_or_else(|| anyhow!("no snippet generated for host"))?;
     let format = format_for_host(host);
     let snippet_text = serialize_snippet(snippet, format)?;
-    let data = safe_read_to_string(&host.path)?;
+    let data = fs::read_to_string(&host.path)
+        .with_context(|| format!("failed to read {}", host.path.display()))?;
 
     let merged = match host.format {
         HostFormat::Json => {
@@ -372,7 +398,8 @@ pub fn write_with_backup(path: &Path, contents: &str, dry_run: bool) -> Result<O
     }
     let backup = path.with_extension("bak");
     if path.exists() {
-        safe_copy(path, &backup)?;
+        fs::copy(path, &backup)
+            .with_context(|| format!("failed to create backup {}", backup.display()))?;
     }
     fs::write(path, contents).with_context(|| format!("failed to write {}", path.display()))?;
     Ok(Some(backup))
@@ -489,7 +516,7 @@ pub fn run_scan_cmd(args: ScanArgs) -> Result<()> {
     }
 
     if args.snippet.is_some() || args.dry_run {
-        let snippets = generate_snippet(&scans, &socket_dir, "rmcp_mux_proxy", &[]);
+        let snippets = generate_snippet(&scans, &socket_dir, "rust-mux-proxy", &[]);
         for (kind, snippet) in snippets {
             let fmt = args.snippet_format.to_lowercase();
             let text = serialize_snippet(&snippet, &fmt)?;
@@ -627,12 +654,11 @@ mod tests {
             svc.args.as_ref().expect("args"),
             &vec!["@mcp/server-memory"]
         );
-        assert!(
-            svc.socket
-                .as_ref()
-                .expect("socket")
-                .contains("/tmp/sockets/memory.sock")
-        );
+        assert!(svc
+            .socket
+            .as_ref()
+            .expect("socket")
+            .contains("/tmp/sockets/memory.sock"));
     }
 
     #[test]
@@ -651,7 +677,7 @@ mod tests {
                 env: None,
             }],
         }];
-        let snippets = generate_snippet(&scans, Path::new("/s"), "rmcp_mux", &["proxy".into()]);
+        let snippets = generate_snippet(&scans, Path::new("/s"), "rust_mux", &["proxy".into()]);
         let node = snippets.get(&HostKind::Codex).expect("codex snippet");
         let servers = node
             .get("mcpServers")
@@ -662,7 +688,7 @@ mod tests {
             .expect("svc entry")
             .as_object()
             .expect("svc object");
-        assert_eq!(svc.get("command").expect("command"), "rmcp_mux");
+        assert_eq!(svc.get("command").expect("command"), "rust_mux");
         let args = svc
             .get("args")
             .expect("args")
@@ -693,7 +719,7 @@ mod tests {
         rewire_host(
             &host,
             Path::new("/tmp/sockets"),
-            "rmcp_mux",
+            "rust_mux",
             &["proxy".into()],
             false,
         )
@@ -709,6 +735,6 @@ mod tests {
             .expect("memory")
             .as_object()
             .expect("memory obj");
-        assert_eq!(mem.get("command").expect("command"), "rmcp_mux");
+        assert_eq!(mem.get("command").expect("command"), "rust_mux");
     }
 }

@@ -3,3 +3,7 @@
 Cargo.lock
 /.ai-agents
 *.txt
+/.vibecrafted/tmp/20260504_1907_perform-the-vc-ownership-skill-on-this-repositor_claude_prompt.md
+/.vibecrafted/tmp/20260504_1907_perform-the-vc-ownership-skill-on-this-repositor_gemini_prompt.md
+/.vibecrafted/plans/
+/.vibecrafted/reports/

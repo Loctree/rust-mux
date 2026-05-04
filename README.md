@@ -169,6 +169,33 @@ rust-mux wizard --config ~/.codex/mcp-mux.toml --service general-memory
 ```
 - Controls: `↑/↓` move, `Enter` edit field, `Space` toggle tray, `s` save, `q` quit. Saves JSON/YAML/TOML based on the extension; creates a `.bak` before overwriting.
 - `--dry-run` runs the wizard without writing files.
+- `--import-config <path>` (repeatable) imports a workspace-local or otherwise non-default MCP config file (JSON or TOML). The wizard auto-detects the schema (`mcpServers`/`servers` for JSON, `[mcp_servers.*]` for TOML).
+
+#### Step 3 — confirm dialog actions
+
+| Action          | What it does |
+|-----------------|--------------|
+| `SAFE GEN`      | Writes `~/.config/mux/{config.toml,mcp.json,mcp.toml}`. `config.toml` is the daemon truth (original upstream commands), `mcp.json`/`mcp.toml` are client-facing snippets where every server runs `rust-mux-proxy --socket <path>`. Never modifies any existing client config. Prints per-client setup commands. |
+| `MUX ONLY`      | Writes the legacy mux config to whichever path you passed via `--config`. |
+| `CLIPBOARD`     | Copies the mux TOML to the macOS clipboard (`pbcopy`). |
+| `[DANGER] auto` | Backup-first preview-first rewrite of *existing* MCP server blocks in known client configs to use `rust-mux-proxy`. Wizard leaves the alternate screen, prints a full preview (planned changes per file, skipped sources with reasons), and refuses to mutate anything until the user types `CONFIRM`. Each modified file gets a timestamped `<file>.<unix_seconds>.bak` next to it; rollback commands are printed at the end. Files that fail to parse are *never* modified. |
+
+The `[DANGER]` flow understands real-world client realities:
+- **Claude Code** & **Claude Desktop** are eligible (JSON `mcpServers` schema, surgical update keeps unrelated keys).
+- **Codex** is eligible (TOML `[mcp_servers.<name>]` schema).
+- **Junie** is eligible (`~/.junie/mcp/mcp.json` plus generic `~/.agents/mcp.json` / `~/.ai/mcp.json`).
+- **Gemini** is by default *ineligible* — there's no observed strict-config flag, so the wizard prefers generated `gemini mcp add ...` commands in the safe path. You can still aim a `--import-config` at a Gemini settings file for inspection.
+
+#### Per-client guidance the safe path prints
+
+After `SAFE GEN`, run the printed commands per client. Quick reference:
+- Claude Code: `claude --strict-mcp-config --mcp-config "$HOME/.config/mux/mcp.json"`
+- Claude Desktop: merge the `mcpServers` block from `~/.config/mux/mcp.json` into `~/Library/Application Support/Claude/claude_desktop_config.json` (no strict-config CLI flag in this variant).
+- Codex CLI: merge the `[mcp_servers]` block from `~/.config/mux/mcp.toml` into `~/.codex/config.toml`, or run `codex mcp add ...` per server. (`codex --config k=v` is a key-value override, not a config-file flag — the wizard will not invent one.)
+- Junie: `junie --mcp-location "$HOME/.config/mux/mcp.json"` (or `--mcp-default-locations` to keep additive.)
+- Gemini CLI: one printed `gemini mcp add <name> -- rust-mux-proxy --socket <path>` per discovered service.
+
+See `docs/WIZARD.md` for the full guided walk-through, conflict handling, and rollback procedure.
 
 ### Dependency notes
 - `ratatui` + `crossterm` power the TUI wizard; both are pure-Rust and optional (build with `--no-default-features` to skip).

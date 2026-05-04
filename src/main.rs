@@ -5,6 +5,8 @@ use clap::{Args, Parser, Subcommand};
 use tracing_subscriber::filter::LevelFilter;
 
 mod config;
+mod danger;
+mod mux_gen;
 mod runtime;
 mod scan;
 mod state;

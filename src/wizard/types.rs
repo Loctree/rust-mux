@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use crate::config::ServerConfig;
-use crate::scan::HostKind;
+use crate::scan::{Confidence, ConfigSchema, HostFormat, HostKind};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Enums
@@ -31,6 +31,18 @@ pub enum HealthCheckChoice {
     TryAgain,
 }
 
+/// Action queued by a confirm-dialog choice that needs to run *outside* the
+/// raw-mode TUI loop (e.g. anything that prints to stdout or asks for typed
+/// confirmation on a normal terminal).
+///
+/// `keys.rs` sets this and exits the loop; `wizard/mod.rs::run_tui` drains
+/// it after restoring the cooked terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingAction {
+    SafeGenerate,
+    DangerAutoConfigure,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     ServiceName,
@@ -52,10 +64,21 @@ pub enum Panel {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfirmChoice {
-    SaveAll,
+    /// Safe path: write `~/.config/mux/{config.toml,mcp.json,mcp.toml}` and
+    /// print per-client setup commands. Existing client configs are left
+    /// untouched.
+    SafeGenerate,
+    /// Save mux daemon config only (legacy `~/.codex/mcp-mux.toml` flow).
     SaveMuxOnly,
+    /// Copy mux config to clipboard.
     CopyToClipboard,
+    /// `[DANGER]` automatically rewrite known MCP server blocks in existing
+    /// client configs to point at `rust-mux-proxy`. Backup-first,
+    /// preview-first, explicit-confirmation-only.
+    DangerAutoConfigure,
+    /// Go back to the previous step.
     Back,
+    /// Exit without saving.
     Exit,
 }
 
@@ -94,10 +117,16 @@ pub struct ServiceEntry {
 /// Represents a detected MCP client (host application)
 #[derive(Debug, Clone)]
 pub struct ClientEntry {
-    /// Host kind (Codex, Cursor, VSCode, Claude, JetBrains)
+    /// Host kind (Codex, Claude, ClaudeDesktop, Junie, Gemini, ...)
     pub kind: HostKind,
     /// Path to the client's config file
     pub config_path: PathBuf,
+    /// Wire format of the file (json/toml).
+    pub format: HostFormat,
+    /// Logical schema inside the file.
+    pub schema: ConfigSchema,
+    /// Discovery confidence — informs the UI label and filtering.
+    pub confidence: Confidence,
     /// Whether this client is selected for rewiring
     pub selected: bool,
     /// Services defined in this client's config
@@ -106,6 +135,8 @@ pub struct ClientEntry {
     pub already_rewired: bool,
     /// Whether the config file exists (client may be installed but without MCP config)
     pub config_exists: bool,
+    /// Whether this client is eligible for the [DANGER] auto-rewrite flow.
+    pub eligible_for_danger: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -142,8 +173,6 @@ pub struct AppState {
     pub wizard_step: WizardStep,
     /// Path to mux config file
     pub config_path: PathBuf,
-    /// Socket directory for mux services
-    pub socket_dir: PathBuf,
     /// Detected/configured MCP servers
     pub services: Vec<ServiceEntry>,
     /// Currently highlighted server in list
@@ -162,6 +191,10 @@ pub struct AppState {
     pub health_choice: HealthCheckChoice,
     pub message: String,
     pub dry_run: bool,
+    /// Action to perform after the TUI loop exits and the terminal has
+    /// been restored to cooked mode (used for `[DANGER]` and the
+    /// safe-path generator that prints to stdout).
+    pub pending_action: Option<PendingAction>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -196,20 +229,22 @@ pub fn next_field(current: Field) -> Field {
 
 pub fn previous_confirm_choice(current: ConfirmChoice) -> ConfirmChoice {
     match current {
-        ConfirmChoice::SaveAll => ConfirmChoice::Exit,
-        ConfirmChoice::SaveMuxOnly => ConfirmChoice::SaveAll,
+        ConfirmChoice::SafeGenerate => ConfirmChoice::Exit,
+        ConfirmChoice::SaveMuxOnly => ConfirmChoice::SafeGenerate,
         ConfirmChoice::CopyToClipboard => ConfirmChoice::SaveMuxOnly,
-        ConfirmChoice::Back => ConfirmChoice::CopyToClipboard,
+        ConfirmChoice::DangerAutoConfigure => ConfirmChoice::CopyToClipboard,
+        ConfirmChoice::Back => ConfirmChoice::DangerAutoConfigure,
         ConfirmChoice::Exit => ConfirmChoice::Back,
     }
 }
 
 pub fn next_confirm_choice(current: ConfirmChoice) -> ConfirmChoice {
     match current {
-        ConfirmChoice::SaveAll => ConfirmChoice::SaveMuxOnly,
+        ConfirmChoice::SafeGenerate => ConfirmChoice::SaveMuxOnly,
         ConfirmChoice::SaveMuxOnly => ConfirmChoice::CopyToClipboard,
-        ConfirmChoice::CopyToClipboard => ConfirmChoice::Back,
+        ConfirmChoice::CopyToClipboard => ConfirmChoice::DangerAutoConfigure,
+        ConfirmChoice::DangerAutoConfigure => ConfirmChoice::Back,
         ConfirmChoice::Back => ConfirmChoice::Exit,
-        ConfirmChoice::Exit => ConfirmChoice::SaveAll,
+        ConfirmChoice::Exit => ConfirmChoice::SafeGenerate,
     }
 }

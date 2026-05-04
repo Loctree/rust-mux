@@ -29,11 +29,13 @@ mod services;
 mod types;
 mod ui;
 
+use clients::client_entry_from_custom_path;
 use keys::handle_key;
+use persist::{run_danger_auto_configure, run_safe_generate};
 use services::{check_health, default_server_config, form_from_service, load_all_services};
 use types::{
-    AppState, ConfirmChoice, Field, HealthCheckChoice, HealthStatus, Panel, ServiceEntry,
-    ServiceSource, WizardStep,
+    AppState, ConfirmChoice, Field, HealthCheckChoice, HealthStatus, Panel, PendingAction,
+    ServiceEntry, ServiceSource, WizardStep,
 };
 use ui::draw_ui;
 
@@ -70,6 +72,10 @@ pub struct WizardArgs {
     /// Do not write files; just preview.
     #[arg(long, default_value_t = false)]
     pub dry_run: bool,
+    /// Import additional MCP client config files (JSON or TOML) discovered
+    /// outside the canonical default locations. May be passed multiple times.
+    #[arg(long = "import-config")]
+    pub import_configs: Vec<PathBuf>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -135,25 +141,28 @@ pub async fn run_wizard(args: WizardArgs) -> Result<()> {
 
     let form = form_from_service(&services[selected]);
 
-    // Default socket directory
-    let socket_dir = expand_path("~/mcp-sockets");
+    let imported_clients: Vec<types::ClientEntry> = args
+        .import_configs
+        .iter()
+        .map(|p| client_entry_from_custom_path(p))
+        .collect();
 
     let mut app = AppState {
         wizard_step: WizardStep::ServerSelection,
         config_path,
-        socket_dir,
         services,
         selected_service: selected,
-        clients: Vec::new(), // Will be populated in step 2
+        clients: imported_clients,
         selected_client: 0,
         form,
         current_field: Field::ServiceName,
         editing: None,
         active_panel: Panel::ServiceList,
-        confirm_choice: ConfirmChoice::SaveAll,
+        confirm_choice: ConfirmChoice::SafeGenerate,
         health_choice: HealthCheckChoice::Ok,
         message: "STEP 1: Server Detection - Space: toggle selection | Tab: switch | Enter: edit | n: next step | q: quit".into(),
         dry_run: args.dry_run,
+        pending_action: None,
     };
 
     run_tui(&mut app)?;
@@ -190,8 +199,29 @@ fn run_tui(app: &mut AppState) -> Result<()> {
         }
     }
 
+    // Restore cooked terminal before any post-loop side effect (println,
+    // confirmation prompt) so output is visible to the user.
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
+
+    // Drain pending action — these need a normal stdout/stdin and never run
+    // inside the raw-mode loop above.
+    if let Some(action) = app.pending_action.take() {
+        match action {
+            PendingAction::SafeGenerate => {
+                let summary = run_safe_generate(app)?;
+                println!("{summary}");
+            }
+            PendingAction::DangerAutoConfigure => {
+                // Pass an inert sink — the function manages its own
+                // crossterm state guarded by the leave/enter calls inside.
+                let mut sink = std::io::sink();
+                let summary = run_danger_auto_configure(app, &mut sink)?;
+                println!("{summary}");
+            }
+        }
+    }
+
     Ok(())
 }

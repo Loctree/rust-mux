@@ -4,12 +4,12 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::clients::detect_clients;
-use super::persist::{execute_confirm_choice, persist_all};
+use super::persist::execute_confirm_choice;
 use super::services::{check_health, default_server_config, form_from_service, service_from_form};
 use super::types::{
-    AppState, ConfirmChoice, Field, HealthCheckChoice, HealthStatus, Panel, ServiceEntry,
-    ServiceSource, WizardStep, next_confirm_choice, next_field, previous_confirm_choice,
-    previous_field,
+    AppState, ConfirmChoice, Field, HealthCheckChoice, HealthStatus, Panel, PendingAction,
+    ServiceEntry, ServiceSource, WizardStep, next_confirm_choice, next_field,
+    previous_confirm_choice, previous_field,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,7 +40,7 @@ pub fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<bool> {
             // First sync form to service
             sync_form_to_service(app);
             app.active_panel = Panel::ConfirmDialog;
-            app.confirm_choice = ConfirmChoice::SaveAll;
+            app.confirm_choice = ConfirmChoice::SafeGenerate;
             app.message = "Use arrows to select, Enter to confirm".into();
         }
 
@@ -228,7 +228,7 @@ pub fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<bool> {
                     // Move to step 3: Confirmation
                     app.wizard_step = WizardStep::Confirmation;
                     app.active_panel = Panel::ConfirmDialog;
-                    app.confirm_choice = ConfirmChoice::SaveAll;
+                    app.confirm_choice = ConfirmChoice::SafeGenerate;
                     app.message = "STEP 3: Confirm - Select action and press Enter".into();
                 }
                 WizardStep::Confirmation => {
@@ -270,7 +270,7 @@ pub fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<bool> {
                     // Go back to step 3
                     app.wizard_step = WizardStep::Confirmation;
                     app.active_panel = Panel::ConfirmDialog;
-                    app.confirm_choice = ConfirmChoice::SaveAll;
+                    app.confirm_choice = ConfirmChoice::SafeGenerate;
                     app.message = "STEP 3: Confirm - Select action and press Enter".into();
                 }
             }
@@ -332,11 +332,11 @@ pub fn handle_key(app: &mut AppState, key: KeyEvent) -> Result<bool> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn handle_confirm_dialog_key(app: &mut AppState, key: KeyEvent) -> Result<bool> {
-    // Order of choices for navigation: SaveAll, SaveMuxOnly, CopyToClipboard, Back, Exit
     let choices = [
-        ConfirmChoice::SaveAll,
+        ConfirmChoice::SafeGenerate,
         ConfirmChoice::SaveMuxOnly,
         ConfirmChoice::CopyToClipboard,
+        ConfirmChoice::DangerAutoConfigure,
         ConfirmChoice::Back,
         ConfirmChoice::Exit,
     ];
@@ -346,7 +346,7 @@ fn handle_confirm_dialog_key(app: &mut AppState, key: KeyEvent) -> Result<bool> 
         .unwrap_or(0);
 
     match key.code {
-        KeyCode::Left => {
+        KeyCode::Left | KeyCode::Up => {
             let new_idx = if current_idx == 0 {
                 choices.len() - 1
             } else {
@@ -354,26 +354,19 @@ fn handle_confirm_dialog_key(app: &mut AppState, key: KeyEvent) -> Result<bool> 
             };
             app.confirm_choice = choices[new_idx];
         }
-        KeyCode::Right => {
+        KeyCode::Right | KeyCode::Down => {
             let new_idx = (current_idx + 1) % choices.len();
             app.confirm_choice = choices[new_idx];
         }
         KeyCode::Enter => match app.confirm_choice {
-            ConfirmChoice::SaveAll => {
-                if !app.dry_run {
-                    persist_all(app)?;
-                    // TODO: Also rewire selected clients
-                }
-                app.message = if app.dry_run {
-                    "Dry run: config would be saved. Exiting...".into()
-                } else {
-                    "Configuration saved!".into()
-                };
+            ConfirmChoice::SafeGenerate => {
+                // Defer to the post-loop drain so prints land on cooked stdout.
+                app.pending_action = Some(PendingAction::SafeGenerate);
                 return Ok(true);
             }
             ConfirmChoice::SaveMuxOnly => {
                 if !app.dry_run {
-                    persist_all(app)?;
+                    super::persist::persist_all(app)?;
                 }
                 app.message = if app.dry_run {
                     "Dry run: mux config would be saved. Exiting...".into()
@@ -383,8 +376,30 @@ fn handle_confirm_dialog_key(app: &mut AppState, key: KeyEvent) -> Result<bool> 
                 return Ok(true);
             }
             ConfirmChoice::CopyToClipboard => {
-                // TODO: Copy config to clipboard
-                app.message = "Config copied to clipboard (not yet implemented)".into();
+                use std::io::Write;
+                let cfg = super::persist::build_config_for_export(app);
+                if let Ok(text) = toml::to_string_pretty(&cfg) {
+                    if let Ok(mut child) = std::process::Command::new("pbcopy")
+                        .stdin(std::process::Stdio::piped())
+                        .spawn()
+                    {
+                        if let Some(mut stdin) = child.stdin.take() {
+                            let _ = stdin.write_all(text.as_bytes());
+                        }
+                        let _ = child.wait();
+                        app.message = "Configuration copied to clipboard!".into();
+                    } else {
+                        app.message = "Failed to copy to clipboard (pbcopy not available)".into();
+                    }
+                } else {
+                    app.message = "Failed to serialize configuration".into();
+                }
+            }
+            ConfirmChoice::DangerAutoConfigure => {
+                // Defer to post-loop drain — needs to leave alt screen and
+                // run a normal-stdin confirmation prompt.
+                app.pending_action = Some(PendingAction::DangerAutoConfigure);
+                return Ok(true);
             }
             ConfirmChoice::Back => {
                 app.active_panel = Panel::Editor;

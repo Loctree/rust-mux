@@ -9,7 +9,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 use tempfile::tempdir;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
+use tokio::net::UnixStream;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::sync::{Mutex, Semaphore, watch};
 
@@ -865,5 +867,196 @@ async fn health_check_fails_for_missing_socket() {
     assert!(
         err.to_string().contains("failed to connect"),
         "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "opcjonalny test roundtrip z lokalnym ~/.cargo/bin/loctree-mcp (uruchamiany przez make test-full)"]
+async fn mux_transport_roundtrip_with_loctree_mcp() {
+    let loctree = expand_path("~/.cargo/bin/loctree-mcp");
+    assert!(
+        loctree.exists(),
+        "brak binarki referencyjnej: {}",
+        loctree.display()
+    );
+
+    let dir = tempdir().expect("tempdir");
+    let socket = dir.path().join("mux-loctree.sock");
+    let params = ResolvedParams {
+        socket: socket.clone(),
+        cmd: loctree.to_string_lossy().to_string(),
+        args: vec![],
+        env: Some(HashMap::new()),
+        max_clients: 5,
+        tray_enabled: false,
+        log_level: "info".into(),
+        service_name: "loctree-mcp".into(),
+        lazy_start: false,
+        max_request_bytes: 1_048_576,
+        request_timeout: Duration::from_secs(10),
+        restart_backoff: Duration::from_millis(200),
+        restart_backoff_max: Duration::from_secs(2),
+        max_restarts: 1,
+        status_file: None,
+        heartbeat_interval: Duration::from_secs(30),
+        heartbeat_timeout: Duration::from_secs(30),
+        heartbeat_max_failures: 3,
+        heartbeat_enabled: false,
+    };
+
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    let mux_shutdown = shutdown.clone();
+    let mux_task = tokio::spawn(async move { super::run_mux_internal(params, mux_shutdown).await });
+
+    for _ in 0..100 {
+        if socket.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        socket.exists(),
+        "socket muxa nie powstał: {}",
+        socket.display()
+    );
+
+    let stream = UnixStream::connect(&socket)
+        .await
+        .expect("połączenie do socketu muxa");
+    let (read_half, mut write_half) = stream.into_split();
+    let mut reader = BufReader::new(read_half);
+
+    let initialize = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "rust-mux-test", "version": "0.1.0"}
+        }
+    });
+    write_half
+        .write_all(
+            (serde_json::to_string(&initialize).expect("serialize initialize") + "\n").as_bytes(),
+        )
+        .await
+        .expect("write initialize");
+
+    let mut line = String::new();
+    let init_response = loop {
+        line.clear();
+        let n = tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+            .await
+            .expect("timeout czytania initialize")
+            .expect("read initialize");
+        assert!(n > 0, "zamknięte połączenie przed initialize response");
+        let json: Value = serde_json::from_str(line.trim()).expect("json initialize response");
+        if json.get("id") == Some(&Value::Number(1.into())) {
+            break json;
+        }
+    };
+    assert!(
+        init_response.get("result").is_some(),
+        "initialize nie zwrócił result: {init_response}"
+    );
+
+    let initialized = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized",
+        "params": {}
+    });
+    write_half
+        .write_all(
+            (serde_json::to_string(&initialized).expect("serialize initialized") + "\n").as_bytes(),
+        )
+        .await
+        .expect("write initialized notification");
+
+    let tools_list = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/list",
+        "params": {}
+    });
+    write_half
+        .write_all(
+            (serde_json::to_string(&tools_list).expect("serialize tools/list") + "\n").as_bytes(),
+        )
+        .await
+        .expect("write tools/list");
+
+    let tools_response = loop {
+        line.clear();
+        let n = tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+            .await
+            .expect("timeout czytania tools/list")
+            .expect("read tools/list");
+        assert!(n > 0, "zamknięte połączenie przed tools/list response");
+        let json: Value = serde_json::from_str(line.trim()).expect("json tools/list response");
+        if json.get("id") == Some(&Value::Number(2.into())) {
+            break json;
+        }
+    };
+    assert!(
+        tools_response.get("result").is_some(),
+        "tools/list nie zwrócił result: {tools_response}"
+    );
+
+    let project_root = env::current_dir()
+        .expect("current_dir")
+        .to_string_lossy()
+        .to_string();
+    let repo_view = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+            "name": "repo-view",
+            "arguments": {
+                "project": project_root
+            }
+        }
+    });
+    write_half
+        .write_all(
+            (serde_json::to_string(&repo_view).expect("serialize tools/call repo-view") + "\n")
+                .as_bytes(),
+        )
+        .await
+        .expect("write tools/call repo-view");
+
+    let repo_view_response = loop {
+        line.clear();
+        let n = tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+            .await
+            .expect("timeout czytania tools/call repo-view")
+            .expect("read tools/call repo-view");
+        assert!(
+            n > 0,
+            "zamknięte połączenie przed tools/call repo-view response"
+        );
+        let json: Value =
+            serde_json::from_str(line.trim()).expect("json tools/call repo-view response");
+        if json.get("id") == Some(&Value::Number(3.into())) {
+            break json;
+        }
+    };
+    let repo_view_result = repo_view_response
+        .get("result")
+        .expect("tools/call repo-view bez result");
+    println!(
+        "loctree-mcp repo-view (rust-mux): {}",
+        serde_json::to_string_pretty(repo_view_result).expect("serialize repo-view result")
+    );
+
+    shutdown.cancel();
+    let join_result = tokio::time::timeout(Duration::from_secs(5), mux_task)
+        .await
+        .expect("timeout na zamknięcie muxa")
+        .expect("join mux task");
+    assert!(
+        join_result.is_ok(),
+        "mux zakończył się błędem: {join_result:?}"
     );
 }

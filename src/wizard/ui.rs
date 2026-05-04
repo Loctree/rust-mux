@@ -286,10 +286,16 @@ pub fn draw_client_list(f: &mut Frame, app: &AppState, area: Rect) {
             // Host kind indicator
             let kind_label = match client.kind {
                 HostKind::Codex => Span::styled("Codex", Style::default().fg(Color::Blue)),
+                HostKind::Claude => Span::styled("Claude", Style::default().fg(Color::Yellow)),
+                HostKind::ClaudeDesktop => {
+                    Span::styled("Claude Desktop", Style::default().fg(Color::Yellow))
+                }
+                HostKind::Junie => Span::styled("Junie", Style::default().fg(Color::Green)),
+                HostKind::Gemini => Span::styled("Gemini", Style::default().fg(Color::Red)),
                 HostKind::Cursor => Span::styled("Cursor", Style::default().fg(Color::Magenta)),
                 HostKind::VSCode => Span::styled("VSCode", Style::default().fg(Color::Cyan)),
-                HostKind::Claude => Span::styled("Claude", Style::default().fg(Color::Yellow)),
                 HostKind::JetBrains => Span::styled("JetBrains", Style::default().fg(Color::Green)),
+                HostKind::Custom => Span::styled("Custom", Style::default().fg(Color::DarkGray)),
                 HostKind::Unknown => Span::styled("Unknown", Style::default().fg(Color::DarkGray)),
             };
 
@@ -378,11 +384,19 @@ pub fn draw_client_details(f: &mut Frame, app: &AppState, area: Rect) {
         lines.push(Line::from("No clients detected."));
         lines.push(Line::from(""));
         lines.push(Line::from("The wizard searches for MCP client configs in:"));
+        lines.push(Line::from("  • ~/.claude.json (Claude Code)"));
+        lines.push(Line::from(
+            "  • ~/Library/Application Support/Claude/claude_desktop_config.json (Claude Desktop)",
+        ));
         lines.push(Line::from("  • ~/.codex/config.toml (Codex)"));
-        lines.push(Line::from("  • ~/Library/.../Cursor/settings.json"));
-        lines.push(Line::from("  • ~/Library/.../Code/settings.json (VSCode)"));
-        lines.push(Line::from("  • ~/.config/Claude/claude_config.json"));
-        lines.push(Line::from("  • ~/Library/.../JetBrains/LLM/mcp.json"));
+        lines.push(Line::from("  • ~/.junie/mcp/mcp.json (Junie)"));
+        lines.push(Line::from(
+            "  • ~/.agents/mcp.json or ~/.ai/mcp.json (Junie generic)",
+        ));
+        lines.push(Line::from("  • ~/.gemini/settings.json (Gemini)"));
+        lines.push(Line::from(
+            "  • Cursor / VSCode / JetBrains settings (legacy, optional)",
+        ));
     } else if app.selected_client < app.clients.len() {
         let client = &app.clients[app.selected_client];
 
@@ -542,19 +556,24 @@ pub fn draw_save_options(f: &mut Frame, app: &AppState, area: Rect) {
 
     let choices = [
         (
-            ConfirmChoice::SaveAll,
-            "Save All",
-            "Save mux config AND rewire selected clients",
+            ConfirmChoice::SafeGenerate,
+            "Safe generate",
+            "Write ~/.config/mux/{config.toml,mcp.json,mcp.toml} + print per-client setup commands",
         ),
         (
             ConfirmChoice::SaveMuxOnly,
-            "Mux Only",
-            "Save mux config only (no client rewiring)",
+            "Mux only",
+            "Save legacy mux config only (no client setup)",
         ),
         (
             ConfirmChoice::CopyToClipboard,
             "Clipboard",
-            "Copy config to clipboard",
+            "Copy mux config to clipboard",
+        ),
+        (
+            ConfirmChoice::DangerAutoConfigure,
+            "[DANGER] auto",
+            "Backup-first preview-first rewrite of EXISTING client configs to use rust-mux-proxy",
         ),
         (ConfirmChoice::Back, "Back", "Return to previous step"),
         (ConfirmChoice::Exit, "Exit", "Exit without saving"),
@@ -592,13 +611,17 @@ pub fn draw_save_options(f: &mut Frame, app: &AppState, area: Rect) {
     lines.push(Line::from(""));
     if app.dry_run {
         lines.push(Line::from(Span::styled(
-            "DRY-RUN MODE: No files will be modified",
+            "DRY-RUN MODE: no files will be modified",
             Style::default().fg(Color::Yellow),
         )));
     } else {
         lines.push(Line::from(Span::styled(
-            "Backups will be created for all modified files (.bak)",
+            "Safe path writes only ~/.config/mux/* and never touches client configs.",
             Style::default().fg(Color::Green),
+        )));
+        lines.push(Line::from(Span::styled(
+            "[DANGER] path takes a timestamped backup of every client file before any change.",
+            Style::default().fg(Color::Red),
         )));
     }
 
@@ -765,9 +788,10 @@ pub fn draw_confirm_dialog(f: &mut Frame, app: &AppState) {
     f.render_widget(Clear, dialog_area);
 
     let choices = [
-        (ConfirmChoice::SaveAll, "SAVE ALL"),
+        (ConfirmChoice::SafeGenerate, "SAFE GEN"),
         (ConfirmChoice::SaveMuxOnly, "MUX ONLY"),
         (ConfirmChoice::CopyToClipboard, "CLIPBOARD"),
+        (ConfirmChoice::DangerAutoConfigure, "[DANGER]"),
         (ConfirmChoice::Back, "BACK"),
         (ConfirmChoice::Exit, "EXIT"),
     ];

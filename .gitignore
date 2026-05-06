@@ -3,7 +3,12 @@
 Cargo.lock
 /.ai-agents
 *.txt
-/.vibecrafted/tmp/20260504_1907_perform-the-vc-ownership-skill-on-this-repositor_claude_prompt.md
-/.vibecrafted/tmp/20260504_1907_perform-the-vc-ownership-skill-on-this-repositor_gemini_prompt.md
-/.vibecrafted/plans/
-/.vibecrafted/reports/
+/*.py
+
+# .vibecrafted: track GUIDELINES.md + the plans/reports symlinks (which point
+# at the per-day artifact root in $HOME). Ignore everything else (tmp scratch,
+# generated prompts, ad-hoc files).
+/.vibecrafted/*
+!/.vibecrafted/GUIDELINES.md
+!/.vibecrafted/plans
+!/.vibecrafted/reports

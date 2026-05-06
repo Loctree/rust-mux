@@ -7,11 +7,7 @@
 //!    (Claude / ClaudeDesktop / Codex / Junie / Gemini / Cursor / VSCode /
 //!    JetBrains) and adds every server it finds, tagged with the originating
 //!    [`ServiceSource::Client`].
-//! 2. **The mux daemon config is loaded next** as `ServiceSource::MuxConfig`.
-//!    Entries that are name-equivalent to ones already discovered from a
-//!    client config are skipped — the client-config copy wins because it is
-//!    what the user is actually running.
-//! 3. **ps-scan enrichment is optional and last** ([`enrich_running_state`]).
+//! 2. **ps-scan enrichment is optional and last** ([`enrich_running_state`]).
 //!    It only sets the `pid` field on entries whose `(cmd, args)` match a
 //!    running process; orphans (running but not in any config) are surfaced
 //!    as `ServiceSource::DetectedRunning` so the operator can see them.
@@ -38,19 +34,14 @@ use super::types::{HealthStatus, ServiceEntry, ServiceSource};
 // Service loading
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Default per-service socket path used when synthesising a `ServerConfig`
-/// from a discovered MCP service (clients usually only specify command/args
-/// — the mux assigns the socket).
-fn default_socket_path(name: &str) -> String {
-    format!("~/.rmcp-servers/rust-mux/sockets/{}.sock", name)
-}
-
 /// Build the wizard's list of `ServiceEntry` from a set of `ScanResult`s.
 ///
 /// - Runs `merge_services` to dedup identical entries.
 /// - Attributes each merged entry to its **first** originating client kind+path
 ///   (sources are ordered by `default_sources()` priority).
-/// - Synthesises a `ServerConfig` with sensible v0.4.0 defaults.
+/// - Synthesises a `ServerConfig` with upstream command/args/env only. Socket
+///   paths stay `None` unless the source explicitly supplied one; `mux_gen`
+///   owns the mux socket path assignment under `~/.config/mux/sockets`.
 ///
 /// Callers append to the result and run `enrich_running_state` afterwards
 /// to stamp PIDs and surface ps-only orphans.
@@ -76,13 +67,8 @@ pub fn build_services_from_scans(scans: &[ScanResult]) -> Vec<ServiceEntry> {
             .map(|(kind, path)| ServiceSource::Client { kind, path })
             .unwrap_or(ServiceSource::DetectedRunning);
 
-        let socket = svc
-            .socket
-            .clone()
-            .unwrap_or_else(|| default_socket_path(&svc.name));
-
         let config = ServerConfig {
-            socket: Some(socket),
+            socket: svc.socket.clone(),
             cmd: Some(svc.command.clone()),
             args: Some(svc.args.clone()),
             env: svc.env.clone(),
@@ -181,7 +167,7 @@ pub fn enrich_running_state(services: &mut Vec<ServiceEntry>) {
             services.push(ServiceEntry {
                 name: proc.synthetic_name.clone(),
                 config: ServerConfig {
-                    socket: Some(default_socket_path(&proc.synthetic_name)),
+                    socket: None,
                     cmd: Some(proc.cmd.clone()),
                     args: Some(proc.args.clone()),
                     env: None,
@@ -370,14 +356,10 @@ pub fn load_services_from_custom_path(path: &Path) -> Result<Vec<ServiceEntry>> 
     let scan = scan_host_file(&host)?;
     let mut out = Vec::with_capacity(scan.services.len());
     for svc in scan.services {
-        let socket = svc
-            .socket
-            .clone()
-            .unwrap_or_else(|| default_socket_path(&svc.name));
         out.push(ServiceEntry {
             name: svc.name.clone(),
             config: ServerConfig {
-                socket: Some(socket),
+                socket: svc.socket.clone(),
                 cmd: Some(svc.command.clone()),
                 args: Some(svc.args.clone()),
                 env: svc.env.clone(),
@@ -489,6 +471,38 @@ mod tests {
             }
             other => panic!("expected Client origin, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn discovered_service_without_socket_leaves_mux_socket_to_generator() {
+        use crate::scan::{Confidence, ConfigSchema, HostFile, HostFormat};
+        let scan = ScanResult {
+            host: HostFile {
+                kind: HostKind::Claude,
+                path: std::path::PathBuf::from("/tmp/test-claude.json"),
+                format: HostFormat::Json,
+                schema: ConfigSchema::McpServersJson,
+                confidence: Confidence::High,
+                writable: true,
+                eligible_for_danger: true,
+            },
+            services: vec![HostService {
+                name: "memory".into(),
+                command: "npx".into(),
+                args: vec!["@modelcontextprotocol/server-memory".into()],
+                socket: None,
+                env: None,
+                enabled: None,
+            }],
+        };
+
+        let entries = build_services_from_scans(&[scan]);
+
+        assert_eq!(entries.len(), 1);
+        assert!(
+            entries[0].config.socket.is_none(),
+            "wizard discovery must not inject a fallback socket before mux_gen assigns ~/.config/mux/sockets"
+        );
     }
 
     #[test]

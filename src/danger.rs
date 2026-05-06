@@ -34,6 +34,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 
+use crate::config::{safe_copy_file, safe_read_to_string};
 use crate::scan::{ConfigSchema, HostFile, HostFormat, HostKind, HostService, scan_host_file};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -136,7 +137,7 @@ pub fn plan_danger_rewrite(
             continue;
         }
 
-        let original = match fs::read_to_string(&source.path) {
+        let original = match safe_read_to_string(&source.path) {
             Ok(s) => s,
             Err(err) => {
                 actions.push(DangerAction {
@@ -378,7 +379,7 @@ fn write_with_timestamped_backup(path: &Path, contents: &str) -> Result<PathBuf>
     }
 
     if path.exists() {
-        fs::copy(path, &backup)
+        safe_copy_file(path, &backup)
             .with_context(|| format!("failed to create backup {}", backup.display()))?;
     }
     fs::write(path, contents).with_context(|| format!("failed to write {}", path.display()))?;

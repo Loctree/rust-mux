@@ -6,7 +6,7 @@ use anyhow::{Context, Result, anyhow};
 use clap::Args;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Config, ServerConfig, expand_path};
+use crate::config::{Config, ServerConfig, expand_path, safe_copy_file, safe_read_to_string};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CLI arg structs (CLI surface)
@@ -414,7 +414,7 @@ struct RawServer {
 /// [`ConfigSchema::AutoJson`] the parser tries `mcpServers` first, then
 /// falls back to `servers` if the shape is clearly an MCP server map.
 pub fn scan_host_file(file: &HostFile) -> Result<ScanResult> {
-    let data = fs::read_to_string(&file.path)
+    let data = safe_read_to_string(&file.path)
         .with_context(|| format!("failed to read {}", file.path.display()))?;
     let services = match (file.format, file.schema) {
         (HostFormat::Json, ConfigSchema::McpServersJson) => {
@@ -761,7 +761,7 @@ pub fn rewire_host(
         .ok_or_else(|| anyhow!("no snippet generated for host"))?;
     let format = format_for_host(host);
     let snippet_text = serialize_snippet(snippet, format)?;
-    let data = fs::read_to_string(&host.path)
+    let data = safe_read_to_string(&host.path)
         .with_context(|| format!("failed to read {}", host.path.display()))?;
 
     let merged = match host.format {
@@ -824,7 +824,7 @@ pub fn write_with_backup(path: &Path, contents: &str, dry_run: bool) -> Result<O
     }
     let backup = path.with_extension("bak");
     if path.exists() {
-        fs::copy(path, &backup)
+        safe_copy_file(path, &backup)
             .with_context(|| format!("failed to create backup {}", backup.display()))?;
     }
     fs::write(path, contents).with_context(|| format!("failed to write {}", path.display()))?;

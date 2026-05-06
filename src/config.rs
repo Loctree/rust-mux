@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
+use std::fs::File;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -67,11 +69,86 @@ pub fn expand_path(raw: impl AsRef<str>) -> PathBuf {
     PathBuf::from(s)
 }
 
+fn reject_parent_components(path: &Path) -> Result<()> {
+    if path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(anyhow!(
+            "refusing path with parent traversal component: {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+pub fn vetted_existing_file(path: &Path) -> Result<PathBuf> {
+    reject_parent_components(path)?;
+    let canonical = fs::canonicalize(path)
+        .with_context(|| format!("failed to canonicalize {}", path.display()))?;
+    if !canonical.is_file() {
+        return Err(anyhow!("not a regular file: {}", canonical.display()));
+    }
+    Ok(canonical)
+}
+
+fn vetted_output_file(path: &Path) -> Result<PathBuf> {
+    reject_parent_components(path)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("output path has no parent: {}", path.display()))?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("failed to create directory {}", parent.display()))?;
+    let safe_parent = fs::canonicalize(parent)
+        .with_context(|| format!("failed to canonicalize {}", parent.display()))?;
+    if !safe_parent.is_dir() {
+        return Err(anyhow!(
+            "output parent is not a directory: {}",
+            safe_parent.display()
+        ));
+    }
+    let name = path
+        .file_name()
+        .ok_or_else(|| anyhow!("output path has no file name: {}", path.display()))?;
+    Ok(safe_parent.join(name))
+}
+
+pub fn safe_read_to_string(path: &Path) -> Result<String> {
+    let safe_path = vetted_existing_file(path)?;
+    let mut data = String::new();
+    // `safe_path` is canonicalized, must be a regular file, and rejects `..`.
+    let mut input = File::open(&safe_path) // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+        .with_context(|| format!("failed to open {}", safe_path.display()))?;
+    input
+        .read_to_string(&mut data)
+        .with_context(|| format!("failed to read {}", safe_path.display()))?;
+    Ok(data)
+}
+
+pub fn safe_copy_file(src: &Path, dst: &Path) -> Result<()> {
+    let safe_src = vetted_existing_file(src)?;
+    let safe_dst = vetted_output_file(dst)?;
+    // Both paths have passed the canonical file/output boundary above.
+    let mut input = File::open(&safe_src) // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+        .with_context(|| format!("failed to open {}", safe_src.display()))?;
+    // `safe_dst` is anchored under a canonicalized directory and rejects `..`.
+    let mut output = File::create(&safe_dst) // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+        .with_context(|| format!("failed to create {}", safe_dst.display()))?;
+    io::copy(&mut input, &mut output).with_context(|| {
+        format!(
+            "failed to copy {} to {}",
+            safe_src.display(),
+            safe_dst.display()
+        )
+    })?;
+    Ok(())
+}
+
 pub fn load_config(path: &Path) -> Result<Option<Config>> {
     if !path.exists() {
         return Ok(None);
     }
-    let data = fs::read_to_string(path)
+    let data = safe_read_to_string(path)
         .with_context(|| format!("failed to read config at {}", path.display()))?;
 
     let ext = path
@@ -92,13 +169,43 @@ pub fn load_config(path: &Path) -> Result<Option<Config>> {
 }
 
 pub fn safe_copy(src: &Path, dst: &Path) -> Result<()> {
-    if let Some(parent) = dst.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create directory {}", parent.display()))?;
+    safe_copy_file(src, dst)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn safe_read_rejects_parent_traversal() {
+        let dir = tempdir().expect("tempdir");
+        let file = dir.path().join("config.json");
+        fs::write(&file, "{}").expect("write");
+        let traversing = dir.path().join("nested/../config.json");
+
+        let err = safe_read_to_string(&traversing).expect_err("must reject parent traversal");
+
+        assert!(
+            err.to_string().contains("parent traversal"),
+            "unexpected error: {err}"
+        );
     }
-    fs::copy(src, dst)
-        .with_context(|| format!("failed to copy {} to {}", src.display(), dst.display()))?;
-    Ok(())
+
+    #[test]
+    fn safe_copy_rejects_parent_traversal_destination() {
+        let dir = tempdir().expect("tempdir");
+        let src = dir.path().join("config.json");
+        fs::write(&src, "{}").expect("write");
+        let dst = dir.path().join("backup/../config.bak");
+
+        let err = safe_copy_file(&src, &dst).expect_err("must reject parent traversal");
+
+        assert!(
+            err.to_string().contains("parent traversal"),
+            "unexpected error: {err}"
+        );
+    }
 }
 
 pub trait CliOptions {

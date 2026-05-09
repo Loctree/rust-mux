@@ -18,6 +18,7 @@ pub struct ServerConfig {
     pub socket: Option<String>,
     pub cmd: Option<String>,
     pub args: Option<Vec<String>>,
+    pub cwd: Option<String>,
     pub max_active_clients: Option<usize>,
     pub tray: Option<bool>,
     pub service_name: Option<String>,
@@ -41,6 +42,7 @@ pub struct ResolvedParams {
     pub socket: PathBuf,
     pub cmd: String,
     pub args: Vec<String>,
+    pub cwd: Option<PathBuf>,
     pub max_clients: usize,
     pub tray_enabled: bool,
     pub log_level: String,
@@ -339,6 +341,10 @@ pub fn resolve_params(cli: &dyn CliOptions, config: Option<&Config>) -> Result<R
             .unwrap_or_default()
     };
 
+    let cwd = service_cfg
+        .as_ref()
+        .and_then(|(_, c)| c.cwd.as_deref().map(expand_path));
+
     let max_clients = service_cfg
         .as_ref()
         .and_then(|(_, c)| c.max_active_clients)
@@ -457,6 +463,7 @@ pub fn resolve_params(cli: &dyn CliOptions, config: Option<&Config>) -> Result<R
         socket,
         cmd,
         args,
+        cwd,
         max_clients,
         tray_enabled,
         log_level,

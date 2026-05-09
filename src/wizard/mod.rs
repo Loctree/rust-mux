@@ -38,6 +38,7 @@ use keys::handle_key;
 use persist::{
     run_danger_auto_configure, run_per_client_generate, run_unified_generate, start_tray_daemon,
 };
+use services::{append_default_discovered_services, build_services_from_scans};
 use types::{
     AppState, CustomPathInput, PendingAction, SourceEntry, SourceStatus, Strategy, SummaryAction,
     TrayChoice, WizardStep,
@@ -80,6 +81,11 @@ pub struct WizardArgs {
     /// Do not write files; just preview.
     #[arg(long, default_value_t = false)]
     pub dry_run: bool,
+    /// Non-interactive strategy preview. Currently supports `unified` with
+    /// `--dry-run`, so CI/agents can smoke the wizard discovery path without
+    /// driving ratatui.
+    #[arg(long)]
+    pub strategy: Option<String>,
     /// Pre-load extra MCP client config files. Each path is added as a
     /// custom source on STEP 1 and selected by default.
     #[arg(long = "import-config")]
@@ -91,6 +97,10 @@ pub struct WizardArgs {
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub async fn run_wizard(args: WizardArgs) -> Result<()> {
+    if let Some(strategy) = args.strategy.as_deref() {
+        return run_wizard_strategy_preview(&args, strategy);
+    }
+
     if !stdout().is_terminal() {
         return Err(anyhow!(
             "wizard requires an interactive TTY; use the CLI subcommands (scan / rewire / health) for non-interactive mode"
@@ -124,6 +134,52 @@ pub async fn run_wizard(args: WizardArgs) -> Result<()> {
 
     run_tui(&mut app)?;
 
+    Ok(())
+}
+
+fn run_wizard_strategy_preview(args: &WizardArgs, strategy: &str) -> Result<()> {
+    if !args.dry_run {
+        return Err(anyhow!(
+            "wizard --strategy currently supports preview only; add --dry-run"
+        ));
+    }
+    if strategy != "unified" {
+        return Err(anyhow!(
+            "unsupported wizard strategy '{strategy}' (currently supported: unified)"
+        ));
+    }
+
+    let config_path = args
+        .config
+        .clone()
+        .unwrap_or_else(|| expand_path("~/.codex/mcp-mux.toml"));
+    let sources = build_initial_sources(&args.import_configs);
+    let scans = sources
+        .iter()
+        .filter(|s| s.selected && matches!(s.status, SourceStatus::Ok { .. }))
+        .filter_map(|s| scan_host_file(&s.host_file).ok())
+        .collect::<Vec<_>>();
+    let mut services = build_services_from_scans(&scans);
+    append_default_discovered_services(&mut services);
+
+    let app = AppState {
+        wizard_step: WizardStep::SummaryConfirm,
+        config_path,
+        sources,
+        selected_source: 0,
+        custom_path: CustomPathInput::default(),
+        services,
+        selected_service: 0,
+        strategy: Strategy::Unified,
+        summary_action: SummaryAction::Confirm,
+        tray_choice: TrayChoice::No,
+        message: String::new(),
+        dry_run: true,
+        pending_action: None,
+        strategy_result: None,
+    };
+
+    println!("{}", run_unified_generate(&app)?);
     Ok(())
 }
 

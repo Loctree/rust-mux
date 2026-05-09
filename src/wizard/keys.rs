@@ -5,7 +5,10 @@ use std::path::PathBuf;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 
-use super::services::{build_services_from_scans, check_health, enrich_running_state};
+use super::services::{
+    append_default_discovered_services, build_services_from_scans, check_health,
+    enrich_running_state,
+};
 use super::types::{
     AppState, PendingAction, SourceEntry, SourceStatus, Strategy, SummaryAction, TrayChoice,
     WizardStep,
@@ -131,6 +134,7 @@ fn advance_to_step2(app: &mut AppState) {
         .collect();
 
     let mut services = build_services_from_scans(&scans);
+    append_default_discovered_services(&mut services);
     enrich_running_state(&mut services);
 
     // Cheap health checks on entries with sockets, so STEP 2 has badge data
@@ -347,6 +351,7 @@ mod tests {
             socket: None,
             cmd: Some("npx".into()),
             args: Some(vec![format!("@modelcontextprotocol/server-{name}")]),
+            cwd: None,
             env: None,
             max_active_clients: Some(5),
             tray: Some(false),

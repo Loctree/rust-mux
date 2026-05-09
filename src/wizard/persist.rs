@@ -62,6 +62,7 @@ fn build_merge_from_services(app: &AppState) -> MergeOutcome {
             name: svc.name.clone(),
             command: svc.config.cmd.clone().unwrap_or_default(),
             args: svc.config.args.clone().unwrap_or_default(),
+            cwd: svc.config.cwd.clone(),
             socket: svc.config.socket.clone(),
             env: svc.config.env.clone(),
             enabled: None,
@@ -92,6 +93,7 @@ struct ServiceExactKey {
 struct ServiceShapeKey {
     command: String,
     args: Vec<String>,
+    cwd: Option<String>,
     socket: Option<String>,
     env: Vec<(String, String)>,
 }
@@ -110,6 +112,7 @@ impl SelectedServiceFilter {
             let shape = ServiceShapeKey {
                 command: svc.config.cmd.clone().unwrap_or_default(),
                 args: svc.config.args.clone().unwrap_or_default(),
+                cwd: svc.config.cwd.clone(),
                 socket: svc.config.socket.clone(),
                 env: sorted_env(svc.config.env.as_ref()),
             };
@@ -137,6 +140,7 @@ impl SelectedServiceFilter {
         let shape = ServiceShapeKey {
             command: svc.command.clone(),
             args: svc.args.clone(),
+            cwd: svc.cwd.clone(),
             socket: svc.socket.clone(),
             env: sorted_env(svc.env.as_ref()),
         };
@@ -172,12 +176,22 @@ pub fn run_unified_generate(app: &AppState) -> Result<String> {
     let outputs = build_mux_outputs(&merge, &mux_dir, "rust-mux-proxy", &[])?;
 
     if app.dry_run {
+        let selected = merge
+            .services
+            .iter()
+            .map(|svc| format!("  - {}", svc.name))
+            .collect::<Vec<_>>()
+            .join("\n");
         return Ok(format!(
             "(dry-run) Would generate:\n  - {}\n  - {}\n  - {}\nPer-client setup commands would be printed on completion.",
             outputs.config_toml_path.display(),
             outputs.mcp_json_path.display(),
             outputs.mcp_toml_path.display()
-        ));
+        ) + if selected.is_empty() {
+            ""
+        } else {
+            "\nSelected servers:\n"
+        } + &selected);
     }
 
     write_mux_outputs(&outputs)?;
@@ -475,6 +489,7 @@ mod tests {
                     ),
                     cmd: Some("npx".into()),
                     args: Some(vec!["@modelcontextprotocol/server-memory".into()]),
+                    cwd: None,
                     env: None,
                     max_active_clients: Some(5),
                     tray: Some(false),
@@ -530,6 +545,7 @@ mod tests {
                 socket: None,
                 cmd: Some("npx".into()),
                 args: Some(vec![package.into()]),
+                cwd: None,
                 env: None,
                 max_active_clients: Some(5),
                 tray: Some(false),

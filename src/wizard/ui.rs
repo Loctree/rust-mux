@@ -230,6 +230,7 @@ fn draw_step2_review(f: &mut Frame, app: &AppState, area: Rect) {
         };
         let kind_color = match &svc.source {
             ServiceSource::Client { kind, .. } => kind_color_value(*kind),
+            ServiceSource::Default { .. } => Color::Cyan,
             ServiceSource::DetectedRunning => Color::Magenta,
         };
         let pid_span = match svc.pid {
@@ -676,6 +677,7 @@ fn selected_per_client_output_kinds(app: &AppState) -> Vec<HostKind> {
         .filter(|svc| svc.selected)
         .filter_map(|svc| match &svc.source {
             ServiceSource::Client { kind, .. } => Some(*kind),
+            ServiceSource::Default { .. } => None,
             ServiceSource::DetectedRunning => None,
         })
         .collect();
@@ -714,6 +716,7 @@ mod tests {
                 socket: None,
                 cmd: Some("npx".into()),
                 args: Some(vec!["@modelcontextprotocol/server-memory".into()]),
+                cwd: None,
                 env: None,
                 max_active_clients: Some(5),
                 tray: Some(false),

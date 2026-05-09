@@ -68,6 +68,7 @@ pub fn build_services_from_scans(scans: &[ScanResult]) -> Vec<ServiceEntry> {
             socket: svc.socket.clone(),
             cmd: Some(svc.command.clone()),
             args: Some(svc.args.clone()),
+            cwd: svc.cwd.clone(),
             env: svc.env.clone(),
             max_active_clients: Some(5),
             tray: Some(false),
@@ -98,11 +99,48 @@ pub fn build_services_from_scans(scans: &[ScanResult]) -> Vec<ServiceEntry> {
     out
 }
 
+pub(super) fn append_default_discovered_services(services: &mut Vec<ServiceEntry>) {
+    if let Some(server) = crate::scan::discover_vibecrafted_mcp() {
+        let source = server.source;
+        let svc = server.into_host_service();
+        services.push(ServiceEntry {
+            name: svc.name.clone(),
+            config: ServerConfig {
+                socket: svc.socket.clone(),
+                cmd: Some(svc.command),
+                args: Some(svc.args),
+                cwd: svc.cwd,
+                env: svc.env,
+                max_active_clients: Some(5),
+                tray: Some(false),
+                service_name: Some(svc.name),
+                log_level: Some("info".into()),
+                lazy_start: Some(false),
+                max_request_bytes: Some(1_048_576),
+                request_timeout_ms: Some(30_000),
+                restart_backoff_ms: Some(1_000),
+                restart_backoff_max_ms: Some(30_000),
+                max_restarts: Some(5),
+                status_file: None,
+                heartbeat_interval_ms: Some(30_000),
+                heartbeat_timeout_ms: Some(30_000),
+                heartbeat_max_failures: Some(3),
+                heartbeat_enabled: Some(true),
+            },
+            health: HealthStatus::Unknown,
+            source: ServiceSource::Default { source },
+            pid: None,
+            selected: true,
+        });
+    }
+}
+
 fn svc_key(svc: &HostService) -> String {
     format!(
-        "{}|{}|{}",
+        "{}|{}|{}|{}",
         svc.command,
         svc.args.join(" "),
+        svc.cwd.as_deref().unwrap_or(""),
         env_signature(svc.env.as_ref())
     )
 }
@@ -167,6 +205,7 @@ pub fn enrich_running_state(services: &mut Vec<ServiceEntry>) {
                     socket: None,
                     cmd: Some(proc.cmd.clone()),
                     args: Some(proc.args.clone()),
+                    cwd: None,
                     env: None,
                     max_active_clients: Some(5),
                     tray: Some(false),
@@ -372,6 +411,7 @@ mod tests {
                 name: "memory".into(),
                 command: "npx".into(),
                 args: vec!["@modelcontextprotocol/server-memory".into()],
+                cwd: None,
                 socket: None,
                 env: None,
                 enabled: None,
@@ -405,6 +445,7 @@ mod tests {
                 name: "memory".into(),
                 command: "npx".into(),
                 args: vec!["@modelcontextprotocol/server-memory".into()],
+                cwd: None,
                 socket: None,
                 env: None,
                 enabled: None,

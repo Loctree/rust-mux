@@ -15,7 +15,7 @@
 use std::path::PathBuf;
 
 use crate::config::ServerConfig;
-use crate::scan::{HostFile, HostKind};
+use crate::scan::{DefaultServerSource, HostFile, HostKind};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Wizard flow
@@ -100,6 +100,8 @@ pub enum ServiceSource {
     /// Discovered inside a known MCP client config file (well-known clients
     /// or `HostKind::Custom` for user-provided paths).
     Client { kind: HostKind, path: PathBuf },
+    /// Built-in discovered server, such as the local Vibecrafted MCP package.
+    Default { source: DefaultServerSource },
     /// Detected as a running process but not present in any scanned config.
     DetectedRunning,
 }
@@ -108,6 +110,7 @@ impl ServiceSource {
     pub fn short_label(&self) -> String {
         match self {
             ServiceSource::Client { kind, .. } => kind.as_label().to_string(),
+            ServiceSource::Default { .. } => "default".into(),
             ServiceSource::DetectedRunning => "running".into(),
         }
     }
